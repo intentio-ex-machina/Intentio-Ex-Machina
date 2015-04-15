@@ -15,17 +15,11 @@
  */
 
 /*
- * IntentFirewall.java - Experimental security enhanced intent firewall.
+ * SEIntent Firewall - IntentFirewall.java
  *
  * Author: Carter Yagemann
- * Version: 0.6 Beta
  *
  * Truly a weapon to surpass metal gear.
- *
- * Features:
- *     * Filtering based on sender package and receiver package pair (see PackagePair class)
- *     * Wildcard support for package pairs
- *     * Added support for Android 5.0.2_r1
  */
 
 package com.android.server.firewall;
@@ -149,7 +143,7 @@ public class IntentFirewall {
      * This is called from ActivityManager to check if a start activity intent should be allowed.
      * It is assumed the caller is already holding the global ActivityManagerService lock.
      *
-     * Modified for the new intent firewall. Calling package can be null if old method is used.
+     * Modified for the new intent firewall. Some parameters can be null if old method is called.
      */
     public boolean checkStartActivity(Intent intent, int callerUid, int callerPid,
             String resolvedType, ApplicationInfo resolvedApp, String callerPackage) {
@@ -184,6 +178,10 @@ public class IntentFirewall {
             candidateRules = new ArrayList<Rule>();
         }
         resolver.queryByComponent(resolvedComponent, candidateRules);
+
+        // Check for userId Rules
+        resolver.queryByUserId(Integer.toString(callerUid), candidateRules);
+        resolver.queryByUserId(Integer.toString(receivingUid), candidateRules);
 
         // Check for PackagePair Rules
         int packagePairMatches = 0;
@@ -419,6 +417,9 @@ public class IntentFirewall {
                 for (int i=0; i<rule.getPackagePairFilterCount(); i++) {
                     resolver.addPackagePairFilter(rule.getPackagePair(i), rule);
                 }
+                for (int i=0; i<rule.getUserFilterCount(); i++) {
+                    resolver.addUserIdFilter(rule.getUserId(i), rule);
+                }
             }
         }
     }
@@ -459,6 +460,8 @@ public class IntentFirewall {
         private static final String TAG_PACKAGE_FILTER = "package-filter";
         private static final String ATTR_SENDER = "sender";
         private static final String ATTR_RECEIVER = "receiver";
+        private static final String TAG_USER = "user";
+        private static final String ATTR_USER_ID = "id";
 
         private static final String ATTR_BLOCK = "block";
         private static final String ATTR_LOG = "log";
@@ -467,6 +470,7 @@ public class IntentFirewall {
                 new ArrayList<FirewallIntentFilter>(1);
         private final ArrayList<ComponentName> mComponentFilters = new ArrayList<ComponentName>(0);
         private final ArrayList<PackagePair> mPackagePairFilters = new ArrayList<PackagePair>(0);
+        private final ArrayList<String> mUserFilters = new ArrayList<String>(0);
         private boolean block;
         private boolean log;
 
@@ -483,10 +487,19 @@ public class IntentFirewall {
         protected void readChild(XmlPullParser parser) throws IOException, XmlPullParserException {
             String currentTag = parser.getName();
 
+            // Intent filter
             if (currentTag.equals(TAG_INTENT_FILTER)) {
                 FirewallIntentFilter intentFilter = new FirewallIntentFilter(this);
                 intentFilter.readFromXml(parser);
                 mIntentFilters.add(intentFilter);
+            // User filter
+            } else if (currentTag.equals(TAG_USER)) {
+                String userId = parser.getAttributeValue(null, ATTR_USER_ID);
+                if (userId == null) {
+                    throw new XmlPullParserException("Id of user cannot be null.", parser, null);
+                }
+                mUserFilters.add(userId);
+            // Package filter
             } else if (currentTag.equals(TAG_PACKAGE_FILTER)) {
                 String senderPackage = parser.getAttributeValue(null, ATTR_SENDER);
                 String receiverPackage = parser.getAttributeValue(null, ATTR_RECEIVER);
@@ -495,6 +508,7 @@ public class IntentFirewall {
                             parser, null);
                 }
                 mPackagePairFilters.add(new PackagePair(senderPackage, receiverPackage));
+            // Component filter
             } else if (currentTag.equals(TAG_COMPONENT_FILTER)) {
                 String componentStr = parser.getAttributeValue(null, ATTR_NAME);
                 if (componentStr == null) {
@@ -529,12 +543,20 @@ public class IntentFirewall {
             return mPackagePairFilters.size();
         }
 
+        public int getUserFilterCount() {
+            return mUserFilters.size();
+        }
+
         public ComponentName getComponentFilter(int index) {
             return mComponentFilters.get(index);
         }
 
         public PackagePair getPackagePair(int index) {
             return mPackagePairFilters.get(index);
+        }
+
+        public String getUserId(int index) {
+            return mUserFilters.get(index);
         }
 
         public boolean getBlock() {
@@ -610,14 +632,33 @@ public class IntentFirewall {
             mRulesByPackagePair.put(packagePair, rules);
         }
 
+        public int queryByUserId(String userId, List<Rule> candidateRules) {
+            Rule[] rules = mRulesByUserId.get(userId);
+            if (rules != null) {
+                candidateRules.addAll(Arrays.asList(rules));
+                return rules.length;
+            }
+            return 0;
+        }
+
+        public void addUserIdFilter(String userId, Rule rule) {
+            Rule[] rules = mRulesByUserId.get(userId);
+            rules = ArrayUtils.appendElement(Rule.class, rules, rule);
+            mRulesByUserId.put(userId, rules);
+        }
+
         private final ArrayMap<ComponentName, Rule[]> mRulesByComponent =
-                new ArrayMap<ComponentName, Rule[]>(0);
+                  new ArrayMap<ComponentName, Rule[]>(0);
 
         private final ArrayMap<PackagePair, Rule[]> mRulesByPackagePair =
-                new ArrayMap<PackagePair, Rule[]>(0);
+                  new ArrayMap<PackagePair, Rule[]>(0);
+
+        private final ArrayMap<String, Rule[]> mRulesByUserId =
+                  new ArrayMap<String, Rule[]>(0);
 
         public int getRulesCount() {
-            return mRulesByComponent.size() + mRulesByPackagePair.size() + filterSet().size();
+            return mRulesByComponent.size() + mRulesByPackagePair.size() + filterSet().size() +
+                   mRulesByUserId.size();
         }
     }
 
@@ -704,8 +745,8 @@ public class IntentFirewall {
      *     <package-filter sender="[package]" receiver="[package]" />
      *
      * and will be checked whenever the sender's package name is given to the intent firewall.
-	 *
-	 * To have a sender match any receiver, set the receiver to "*".
+     *
+     * To have a sender match any receiver, set the receiver to "*".
      */
     private static final class PackagePair {
 
