@@ -15,4 +15,5 @@ To install the SEIntentFirewall, replace the java files in your Android framewor
 in this repo:
 
 `IntentFirewall.java`: `./frameworks/base/services/core/java/com/android/server/firewall/IntentFirewall.java`
+
 `ActivityStackSupervisor.java`: `./frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java`
