@@ -17,3 +17,32 @@ in this repo:
 `IntentFirewall.java`: `./frameworks/base/services/core/java/com/android/server/firewall/IntentFirewall.java`
 
 `ActivityStackSupervisor.java`: `./frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java`
+
+Filter Scheme
+-------------
+
+    <rules>
+    
+      <activity block="[true/false]" log="[true/false]" >
+        
+        <intent-filter >
+          <path literal="[literal]" prefix="[prefix]" sglob="[sglob]" />
+          <auth host="[host]" port="[port]" />
+          <ssp literal="[literal]" prefix="[prefix]" sglob="[sglob]" />
+          <scheme name="[name]" />
+          <type name="[name]" />
+          <cat name="[category]" />
+          <action name="[action]" />
+        </intent-filter>
+        
+        <component-filter name="[receiving component]" />
+      
+        <package-filter sender="[package or *]" receiver="[package or *]" />
+        
+        <user id="[id number]" />
+        
+        <data contains="[string]" />
+        
+      </activity>
+      
+    </rules>

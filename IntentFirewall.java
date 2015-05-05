@@ -183,6 +183,9 @@ public class IntentFirewall {
         resolver.queryByUserId(Integer.toString(callerUid), candidateRules);
         resolver.queryByUserId(Integer.toString(receivingUid), candidateRules);
 
+        // Check for data rules
+        resolver.queryByData(intent.getDataString(), candidateRules);
+
         // Check for PackagePair Rules
         int packagePairMatches = 0;
         // First check for explicit matches
@@ -420,6 +423,9 @@ public class IntentFirewall {
                 for (int i=0; i<rule.getUserFilterCount(); i++) {
                     resolver.addUserIdFilter(rule.getUserId(i), rule);
                 }
+                for (int i=0; i<rule.getDataFilterCount(); i++) {
+                    resolver.addDataFilter(rule.getData(i), rule);
+                }
             }
         }
     }
@@ -462,6 +468,8 @@ public class IntentFirewall {
         private static final String ATTR_RECEIVER = "receiver";
         private static final String TAG_USER = "user";
         private static final String ATTR_USER_ID = "id";
+        private static final String TAG_DATA = "data";
+        private static final String ATTR_CONTAINS = "contains";
 
         private static final String ATTR_BLOCK = "block";
         private static final String ATTR_LOG = "log";
@@ -471,6 +479,7 @@ public class IntentFirewall {
         private final ArrayList<ComponentName> mComponentFilters = new ArrayList<ComponentName>(0);
         private final ArrayList<PackagePair> mPackagePairFilters = new ArrayList<PackagePair>(0);
         private final ArrayList<String> mUserFilters = new ArrayList<String>(0);
+        private final ArrayList<String> mDataFilters = new ArrayList<String>(0);
         private boolean block;
         private boolean log;
 
@@ -499,6 +508,12 @@ public class IntentFirewall {
                     throw new XmlPullParserException("Id of user cannot be null.", parser, null);
                 }
                 mUserFilters.add(userId);
+            } else if (currentTag.equals(TAG_DATA)) {
+                String dataContains = parser.getAttributeValue(null, ATTR_CONTAINS);
+                if (dataContains == null) {
+                    throw new XmlPullParserException("Data contains attribute cannot be null.");
+                }
+                mDataFilters.add(dataContains);
             // Package filter
             } else if (currentTag.equals(TAG_PACKAGE_FILTER)) {
                 String senderPackage = parser.getAttributeValue(null, ATTR_SENDER);
@@ -547,6 +562,10 @@ public class IntentFirewall {
             return mUserFilters.size();
         }
 
+        public int getDataFilterCount() {
+            return mDataFilters.size();
+        }
+
         public ComponentName getComponentFilter(int index) {
             return mComponentFilters.get(index);
         }
@@ -557,6 +576,10 @@ public class IntentFirewall {
 
         public String getUserId(int index) {
             return mUserFilters.get(index);
+        }
+
+        public String getData(int index) {
+            return mDataFilters.get(index);
         }
 
         public boolean getBlock() {
@@ -647,18 +670,52 @@ public class IntentFirewall {
             mRulesByUserId.put(userId, rules);
         }
 
+        public int queryByData(String data, List<Rule> candidateRules) {
+            ArrayList<Rule> rulesList = new ArrayList<Rule>(0);
+            for (int i = 0; i < mRulesByData.size(); i++) {
+                Rule[] rules = mRulesByData.valueAt(i);
+                if (rules != null) {
+                    for (int k=0; k<rules.length; k++) {
+                        Rule rule = rules[k];
+                        for (int j=0; j<rule.getDataFilterCount(); j++) {
+                            String ruleData = rule.getData(i);
+                            if (data != null && ruleData != null)
+                                if (data.contains(ruleData))
+                                    rulesList.add(rule);
+                        }
+                    }
+                }
+            }
+
+            if (rulesList.size() > 0) {
+                candidateRules.addAll(rulesList);
+                return rulesList.size();
+            }
+
+            return 0;
+        }
+
+        public void addDataFilter(String data, Rule rule) {
+            Rule[] rules = mRulesByData.get(data);
+            rules = ArrayUtils.appendElement(Rule.class, rules, rule);
+            mRulesByData.put(data, rules);
+        }
+
         private final ArrayMap<ComponentName, Rule[]> mRulesByComponent =
                   new ArrayMap<ComponentName, Rule[]>(0);
 
         private final ArrayMap<PackagePair, Rule[]> mRulesByPackagePair =
                   new ArrayMap<PackagePair, Rule[]>(0);
 
+        private final ArrayMap<String, Rule[]> mRulesByData =
+                  new ArrayMap<String, Rule[]>(0);
+
         private final ArrayMap<String, Rule[]> mRulesByUserId =
                   new ArrayMap<String, Rule[]>(0);
 
         public int getRulesCount() {
             return mRulesByComponent.size() + mRulesByPackagePair.size() + filterSet().size() +
-                   mRulesByUserId.size();
+                   mRulesByUserId.size() + mRulesByData.size();
         }
     }
 
