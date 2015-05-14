@@ -14,14 +14,6 @@
  * limitations under the License.
  */
 
-/*
- * SEIntent Firewall - IntentFirewall.java
- *
- * Author: Carter Yagemann
- *
- * Truly a weapon to surpass metal gear.
- */
-
 package com.android.server.firewall;
 
 import android.app.AppGlobals;
@@ -185,6 +177,9 @@ public class IntentFirewall {
 
         // Check for data rules
         resolver.queryByData(intent.getDataString(), candidateRules);
+
+        // Check for extra rules
+        resolver.queryByExtra(intent, candidateRules);
 
         // Check for PackagePair Rules
         int packagePairMatches = 0;
@@ -426,6 +421,9 @@ public class IntentFirewall {
                 for (int i=0; i<rule.getDataFilterCount(); i++) {
                     resolver.addDataFilter(rule.getData(i), rule);
                 }
+                for (int i=0; i<rule.getExtraFilterCount(); i++) {
+                    resolver.addExtraFilter(rule.getExtra(i), rule);
+                }
             }
         }
     }
@@ -470,6 +468,9 @@ public class IntentFirewall {
         private static final String ATTR_USER_ID = "id";
         private static final String TAG_DATA = "data";
         private static final String ATTR_CONTAINS = "contains";
+        private static final String TAG_EXTRA = "extra";
+        private static final String ATTR_TYPE = "type";
+        private static final String ATTR_VALUE = "value";
 
         private static final String ATTR_BLOCK = "block";
         private static final String ATTR_LOG = "log";
@@ -480,6 +481,7 @@ public class IntentFirewall {
         private final ArrayList<PackagePair> mPackagePairFilters = new ArrayList<PackagePair>(0);
         private final ArrayList<String> mUserFilters = new ArrayList<String>(0);
         private final ArrayList<String> mDataFilters = new ArrayList<String>(0);
+        private final ArrayList<String[]> mExtraFilters = new ArrayList<String[]>(0);
         private boolean block;
         private boolean log;
 
@@ -508,12 +510,22 @@ public class IntentFirewall {
                     throw new XmlPullParserException("Id of user cannot be null.", parser, null);
                 }
                 mUserFilters.add(userId);
+            // Data filter
             } else if (currentTag.equals(TAG_DATA)) {
                 String dataContains = parser.getAttributeValue(null, ATTR_CONTAINS);
                 if (dataContains == null) {
                     throw new XmlPullParserException("Data contains attribute cannot be null.");
                 }
                 mDataFilters.add(dataContains);
+            // Extra filter
+            } else if (currentTag.equals(TAG_EXTRA)) {
+                String extraType = parser.getAttributeValue(null, ATTR_TYPE);
+                String extraValue = parser.getAttributeValue(null, ATTR_VALUE);
+                if (extraType == null || extraValue == null) {
+                    throw new XmlPullParserException("Extra rules must contain type and value.");
+                }
+                String[] extraRule = {extraType, extraValue};
+                mExtraFilters.add(extraRule);
             // Package filter
             } else if (currentTag.equals(TAG_PACKAGE_FILTER)) {
                 String senderPackage = parser.getAttributeValue(null, ATTR_SENDER);
@@ -566,6 +578,10 @@ public class IntentFirewall {
             return mDataFilters.size();
         }
 
+        public int getExtraFilterCount() {
+            return mExtraFilters.size();
+        }
+
         public ComponentName getComponentFilter(int index) {
             return mComponentFilters.get(index);
         }
@@ -580,6 +596,10 @@ public class IntentFirewall {
 
         public String getData(int index) {
             return mDataFilters.get(index);
+        }
+
+        public String[] getExtra(int index) {
+            return mExtraFilters.get(index);
         }
 
         public boolean getBlock() {
@@ -695,10 +715,23 @@ public class IntentFirewall {
             return 0;
         }
 
+        public int queryByExtra(Intent intent, List<Rule> candidateRules) {
+
+            // TODO
+
+            return 0;
+        }
+
         public void addDataFilter(String data, Rule rule) {
             Rule[] rules = mRulesByData.get(data);
             rules = ArrayUtils.appendElement(Rule.class, rules, rule);
             mRulesByData.put(data, rules);
+        }
+
+        public void addExtraFilter(String[] extra, Rule rule) {
+            Rule[] rules = mRulesByExtra.get(extra);
+            rules = ArrayUtils.appendElement(Rule.class, rules, rule);
+            mRulesByExtra.put(extra, rules);
         }
 
         private final ArrayMap<ComponentName, Rule[]> mRulesByComponent =
@@ -710,12 +743,15 @@ public class IntentFirewall {
         private final ArrayMap<String, Rule[]> mRulesByData =
                   new ArrayMap<String, Rule[]>(0);
 
+        private final ArrayMap<String[], Rule[]> mRulesByExtra =
+                  new ArrayMap<String[], Rule[]>(0);
+
         private final ArrayMap<String, Rule[]> mRulesByUserId =
                   new ArrayMap<String, Rule[]>(0);
 
         public int getRulesCount() {
             return mRulesByComponent.size() + mRulesByPackagePair.size() + filterSet().size() +
-                   mRulesByUserId.size() + mRulesByData.size();
+                   mRulesByUserId.size() + mRulesByData.size() + mRulesByExtra.size();
         }
     }
 

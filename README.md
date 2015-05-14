@@ -42,6 +42,8 @@ Filter Scheme
         <user id="[id number]" />
         
         <data contains="[string]" />
+
+        <extra type="[int|float|string]" value="[value]" />
         
       </activity>
       
