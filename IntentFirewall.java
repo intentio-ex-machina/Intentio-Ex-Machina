@@ -29,6 +29,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.RemoteException;
+import android.os.Bundle;
 import android.util.ArrayMap;
 import android.util.Slog;
 import android.util.Xml;
@@ -47,6 +48,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Set;
 
 public class IntentFirewall {
     static final String TAG = "IntentFirewall";
@@ -717,9 +719,71 @@ public class IntentFirewall {
 
         public int queryByExtra(Intent intent, List<Rule> candidateRules) {
 
-            // TODO
+            ArrayList<Rule> rulesList = new ArrayList<Rule>(0);
+            for (int i = 0; i < mRulesByExtra.size(); i++) {
+                Rule[] rules = mRulesByExtra.valueAt(i);
+                if (rules != null) {
+                    for (int k=0; k<rules.length; k++) {
+                        Rule rule = rules[k];
+                        for (int j=0; j<rule.getExtraFilterCount(); j++) {
+                            String[] extraRule = rule.getExtra(i);
+                            String extraType = extraRule[0];
+                            String extraValue = extraRule[1];
+                            if (compareExtra(intent.getExtras(), extraType, extraValue))
+                                rulesList.add(rule);
+                        }
+                    }
+                }
+            }
+
+            if (rulesList.size() > 0) {
+                candidateRules.addAll(rulesList);
+                return rulesList.size();
+            }
 
             return 0;
+        }
+
+        /**
+         * Helper method for queryByExtra. Takes a bundle, and the type and value for
+         * an extra rule and tries to match them. Returns true if a match was found,
+         * otherwise returns false.
+         */
+        private boolean compareExtra(Bundle extras, String type, String value) {
+
+            if (extras == null) return false;
+
+            Set<String> keys = extras.keySet();
+
+            for(String key : keys) {
+                if (type.equalsIgnoreCase("string")) {
+                    String keyValue = extras.getString(key, null);
+                    if (keyValue != null)
+                        if (keyValue.contains(value))
+                            return true;
+                } else if (type.equalsIgnoreCase("int")) {
+                    int keyValue = extras.getInt(key);
+                    if (keyValue != 0) {
+                        try {
+                            if (keyValue == Integer.parseInt(value))
+                                return true;
+                        } catch (Exception e) {
+                            Slog.e(TAG, "Extra rule is type int, but value is not an int");
+                        }
+                    }
+                } else if (type.equalsIgnoreCase("float")) {
+                    float keyValue = extras.getFloat(key);
+                    if (keyValue != 0.0) {
+                        try {
+                            if (keyValue == Float.parseFloat(value))
+                                return true;
+                        } catch (Exception e) {
+                            Slog.e(TAG, "Extra rule is type float, but value is not a float");
+                        }
+                    }
+                }
+            }
+            return false;
         }
 
         public void addDataFilter(String data, Rule rule) {
