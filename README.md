@@ -46,5 +46,27 @@ Filter Scheme
         <extra type="[int|float|string]" value="[value]" />
         
       </activity>
+
+      <service block="[true/false]" log="[true/false]" >
+        
+        <intent-filter >
+          <path literal="[literal]" prefix="[prefix]" sglob="[sglob]" />
+          <auth host="[host]" port="[port]" />
+          <ssp literal="[literal]" prefix="[prefix]" sglob="[sglob]" />
+          <scheme name="[name]" />
+          <type name="[name]" />
+          <cat name="[category]" />
+          <action name="[action]" />
+        </intent-filter>
+        
+        <component-filter name="[receiving component]" />
+        
+        <user id="[id number]" />
+        
+        <data contains="[string]" />
+
+        <extra type="[int|float|string]" value="[value]" />
+        
+      </service>
       
     </rules>

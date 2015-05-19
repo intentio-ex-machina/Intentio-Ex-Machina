@@ -161,6 +161,24 @@ public class IntentFirewall {
             int intentType, Intent intent, int callerUid, int callerPid, String resolvedType,
             int receivingUid, String callerPackage) {
 
+        // Logging
+        Slog.v(TAG, callerPackage + " sent intent {");
+        if (intent.getAction() != null)
+            Slog.v(TAG, "    action: " + intent.getAction());
+        if (intent.getDataString() != null)
+            Slog.v(TAG, "      data: " + intent.getDataString());
+        if (resolvedComponent != null)
+            if (resolvedComponent.getPackageName() != null)
+                Slog.v(TAG, "  receiver: " + resolvedComponent.getPackageName());
+        if (intent.getExtras() != null) {
+            Set<String> keys = intent.getExtras().keySet();
+            Slog.v(TAG, "   extras {");
+            for(String key : keys)
+                Slog.v(TAG, "     " + key);
+            Slog.v(TAG, "   }");
+        }
+        Slog.v(TAG, "}");
+
         boolean log = false;
         boolean block = false;
 
