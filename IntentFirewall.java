@@ -751,6 +751,7 @@ public class IntentFirewall {
          */
         private boolean compareExtra(Bundle extras, String type, String value) {
 
+            // extras could be null, in which case there is nothing to check
             if (extras == null) return false;
 
             Set<String> keys = extras.keySet();
