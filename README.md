@@ -18,6 +18,8 @@ IntentFirewall.java: `./frameworks/base/services/core/java/com/android/server/fi
 
 ActivityStackSupervisor.java: `./frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java`
 
+ActiveServices.java: `./frameworks/base/services/core/java/com/android/server/am/ActiveServices.java`
+
 Filter Scheme
 -------------
 
@@ -39,8 +41,6 @@ Filter Scheme
       
         <package-filter sender="[package or *]" receiver="[package or *]" />
         
-        <user id="[id number]" />
-        
         <data contains="[string]" />
 
         <extra type="[int|float|string]" value="[value]" />
@@ -60,8 +60,8 @@ Filter Scheme
         </intent-filter>
         
         <component-filter name="[receiving component]" />
-        
-        <user id="[id number]" />
+
+        <package-filter sender="[package or *]" receiver="[package or *]" />
         
         <data contains="[string]" />
 

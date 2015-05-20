@@ -133,6 +133,14 @@ public class IntentFirewall {
                 resolvedType, resolvedApp, null);
     }
 
+    public boolean checkService(ComponentName resolvedService, Intent intent, int callerUid,
+            int callerPid, String resolvedType, ApplicationInfo resolvedApp) {
+        Slog.w(TAG, "Using old checkService call");
+
+        return checkService(resolvedService, intent, callerUid, callerPid, resolvedType,
+            resolvedApp, null);
+    }
+
     /**
      * This is called from ActivityManager to check if a start activity intent should be allowed.
      * It is assumed the caller is already holding the global ActivityManagerService lock.
@@ -146,9 +154,9 @@ public class IntentFirewall {
     }
 
     public boolean checkService(ComponentName resolvedService, Intent intent, int callerUid,
-            int callerPid, String resolvedType, ApplicationInfo resolvedApp) {
+            int callerPid, String resolvedType, ApplicationInfo resolvedApp, String callerPackage) {
         return checkIntent(mServiceResolver, resolvedService, TYPE_SERVICE, intent, callerUid,
-                callerPid, resolvedType, resolvedApp.uid, null);
+                callerPid, resolvedType, resolvedApp.uid, callerPackage);
     }
 
     public boolean checkBroadcast(Intent intent, int callerUid, int callerPid,
