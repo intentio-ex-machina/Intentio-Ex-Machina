@@ -1089,7 +1089,7 @@ public final class ActiveServices {
                 Slog.w(TAG, "Could not fetch callingPackage for intent firewall");
             }
             if (!mAm.mIntentFirewall.checkService(r.name, service, callingUid, callingPid,
-                    resolvedType, r.appInfo, callingPackage)) {
+                    resolvedType, r.appInfo, callingPackage, userId)) {
                 return null;
             }
             return new ServiceLookupResult(r, null);

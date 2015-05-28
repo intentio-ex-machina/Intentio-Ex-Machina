@@ -1293,8 +1293,8 @@ public final class ActivityStackSupervisor implements DisplayListener {
             }
         }
 
+        final int userId = aInfo != null ? UserHandle.getUserId(aInfo.applicationInfo.uid) : 0;
         if (err == ActivityManager.START_SUCCESS) {
-            final int userId = aInfo != null ? UserHandle.getUserId(aInfo.applicationInfo.uid) : 0;
             Slog.i(TAG, "START u" + userId + " {" + intent.toShortString(true, true, true, false)
                     + "} from uid " + callingUid
                     + " on display " + (container == null ? (mFocusedStack == null ?
@@ -1429,7 +1429,7 @@ public final class ActivityStackSupervisor implements DisplayListener {
         }
 
         boolean abort = !mService.mIntentFirewall.checkStartActivity(intent, callingUid,
-                callingPid, resolvedType, aInfo.applicationInfo, callingPackage);
+                callingPid, resolvedType, aInfo.applicationInfo, callingPackage, userId);
 
         if (mService.mController != null) {
             try {

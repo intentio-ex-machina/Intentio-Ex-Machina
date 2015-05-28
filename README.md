@@ -38,6 +38,8 @@ Filter Scheme
         </intent-filter>
         
         <component-filter name="[receiving component]" />
+
+        <user-id sender="[userid]" />
       
         <package-filter sender="[package or *]" receiver="[package or *]" />
         
@@ -60,6 +62,8 @@ Filter Scheme
         </intent-filter>
         
         <component-filter name="[receiving component]" />
+
+        <user-id sender="[userid]" />
 
         <package-filter sender="[package or *]" receiver="[package or *]" />
         

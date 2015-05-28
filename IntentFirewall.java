@@ -130,7 +130,7 @@ public class IntentFirewall {
         Slog.w(TAG, "Using old checkStartActivity call");
 
         return checkStartActivity(intent, callerUid, callerPid,
-                resolvedType, resolvedApp, null);
+                resolvedType, resolvedApp, null, 0);
     }
 
     public boolean checkService(ComponentName resolvedService, Intent intent, int callerUid,
@@ -138,7 +138,7 @@ public class IntentFirewall {
         Slog.w(TAG, "Using old checkService call");
 
         return checkService(resolvedService, intent, callerUid, callerPid, resolvedType,
-            resolvedApp, null);
+            resolvedApp, null, 0);
     }
 
     /**
@@ -148,26 +148,26 @@ public class IntentFirewall {
      * Modified for the new intent firewall. Some parameters can be null if old method is called.
      */
     public boolean checkStartActivity(Intent intent, int callerUid, int callerPid,
-            String resolvedType, ApplicationInfo resolvedApp, String callerPackage) {
+            String resolvedType, ApplicationInfo resolvedApp, String callerPackage, int userId) {
         return checkIntent(mActivityResolver, intent.getComponent(), TYPE_ACTIVITY, intent,
-                callerUid, callerPid, resolvedType, resolvedApp.uid, callerPackage);
+                callerUid, callerPid, resolvedType, resolvedApp.uid, callerPackage, userId);
     }
 
     public boolean checkService(ComponentName resolvedService, Intent intent, int callerUid,
-            int callerPid, String resolvedType, ApplicationInfo resolvedApp, String callerPackage) {
+            int callerPid, String resolvedType, ApplicationInfo resolvedApp, String callerPackage, int userId) {
         return checkIntent(mServiceResolver, resolvedService, TYPE_SERVICE, intent, callerUid,
-                callerPid, resolvedType, resolvedApp.uid, callerPackage);
+                callerPid, resolvedType, resolvedApp.uid, callerPackage, userId);
     }
 
     public boolean checkBroadcast(Intent intent, int callerUid, int callerPid,
             String resolvedType, int receivingUid) {
         return checkIntent(mBroadcastResolver, intent.getComponent(), TYPE_BROADCAST, intent,
-                callerUid, callerPid, resolvedType, receivingUid, null);
+                callerUid, callerPid, resolvedType, receivingUid, null, 0);
     }
 
     public boolean checkIntent(FirewallIntentResolver resolver, ComponentName resolvedComponent,
             int intentType, Intent intent, int callerUid, int callerPid, String resolvedType,
-            int receivingUid, String callerPackage) {
+            int receivingUid, String callerPackage, int userId) {
 
         // Logging
         Slog.v(TAG, callerPackage + " sent intent {");
@@ -178,6 +178,8 @@ public class IntentFirewall {
         if (resolvedComponent != null)
             if (resolvedComponent.getPackageName() != null)
                 Slog.v(TAG, "  receiver: " + resolvedComponent.getPackageName());
+        if (userId > 0)
+            Slog.v(TAG, "    userId: " + userId);
         if (intent.getExtras() != null) {
             Set<String> keys = intent.getExtras().keySet();
             Slog.v(TAG, "   extras {");
@@ -200,8 +202,8 @@ public class IntentFirewall {
         resolver.queryByComponent(resolvedComponent, candidateRules);
 
         // Check for userId Rules
-        resolver.queryByUserId(Integer.toString(callerUid), candidateRules);
-        resolver.queryByUserId(Integer.toString(receivingUid), candidateRules);
+        if (userId > 0)
+            resolver.queryByUserId(Integer.toString(userId), candidateRules);
 
         // Check for data rules
         resolver.queryByData(intent.getDataString(), candidateRules);
@@ -492,8 +494,8 @@ public class IntentFirewall {
         private static final String TAG_PACKAGE_FILTER = "package-filter";
         private static final String ATTR_SENDER = "sender";
         private static final String ATTR_RECEIVER = "receiver";
-        private static final String TAG_USER = "user";
-        private static final String ATTR_USER_ID = "id";
+        private static final String TAG_USER = "user-id";
+        private static final String ATTR_USER_ID = "sender";
         private static final String TAG_DATA = "data";
         private static final String ATTR_CONTAINS = "contains";
         private static final String TAG_EXTRA = "extra";
