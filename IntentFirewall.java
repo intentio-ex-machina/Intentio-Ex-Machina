@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Modified by Carter Yagemann for SEIntent Firewall project.
+ * Copyright (C) 2015 All rights reserved.
  */
 
 package com.android.server.firewall;
@@ -40,6 +43,11 @@ import com.android.server.IntentResolver;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
+import android.app.AlertDialog;
+import android.content.DialogInterface;
+import android.content.Context;
+import android.app.ActivityThread;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -52,6 +60,8 @@ import java.util.Set;
 
 public class IntentFirewall {
     static final String TAG = "IntentFirewall";
+
+    static final boolean VERBOSE_LOGGING = true;
 
     // e.g. /data/system/ifw or /data/secure/system/ifw
     private static final File RULES_DIR = new File(Environment.getSystemSecureDirectory(), "ifw");
@@ -169,25 +179,21 @@ public class IntentFirewall {
             int intentType, Intent intent, int callerUid, int callerPid, String resolvedType,
             int receivingUid, String callerPackage, int userId) {
 
-        // Logging
-        Slog.v(TAG, callerPackage + " sent intent {");
-        if (intent.getAction() != null)
-            Slog.v(TAG, "    action: " + intent.getAction());
-        if (intent.getDataString() != null)
-            Slog.v(TAG, "      data: " + intent.getDataString());
-        if (resolvedComponent != null)
-            if (resolvedComponent.getPackageName() != null)
-                Slog.v(TAG, "  receiver: " + resolvedComponent.getPackageName());
-        if (userId > 0)
-            Slog.v(TAG, "    userId: " + userId);
-        if (intent.getExtras() != null) {
-            Set<String> keys = intent.getExtras().keySet();
-            Slog.v(TAG, "   extras {");
-            for(String key : keys)
-                Slog.v(TAG, "     " + key);
-            Slog.v(TAG, "   }");
+        if (VERBOSE_LOGGING) {
+            Slog.v(TAG, callerUid + " sent intent {");
+            if (callerPackage != null)
+                Slog.v(TAG, "  from pkg: " + callerPackage);
+            if (intent.getAction() != null)
+                Slog.v(TAG, "    action: " + intent.getAction());
+            if (intent.getDataString() != null)
+                Slog.v(TAG, "      data: " + intent.getDataString());
+            if (resolvedComponent != null)
+                if (resolvedComponent.getPackageName() != null)
+                    Slog.v(TAG, "    to pkg: " + resolvedComponent.getPackageName());
+            if (userId > 0)
+                Slog.v(TAG, "    userId: " + userId);
+            Slog.v(TAG, "}");
         }
-        Slog.v(TAG, "}");
 
         boolean log = false;
         boolean block = false;
