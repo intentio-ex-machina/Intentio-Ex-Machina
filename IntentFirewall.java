@@ -43,11 +43,6 @@ import com.android.server.IntentResolver;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
-import android.app.AlertDialog;
-import android.content.DialogInterface;
-import android.content.Context;
-import android.app.ActivityThread;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
