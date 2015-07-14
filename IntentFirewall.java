@@ -146,7 +146,7 @@ public class IntentFirewall {
         Slog.w(TAG, "Using old checkStartActivity call");
 
         return checkStartActivity(intent, callerUid, callerPid,
-                resolvedType, resolvedApp, null, 0);
+                resolvedType, resolvedApp, null, 0, -1);
     }
 
     public boolean checkService(ComponentName resolvedService, Intent intent, int callerUid,
@@ -164,30 +164,32 @@ public class IntentFirewall {
      * Modified for the new intent firewall. Some parameters can be null if old method is called.
      */
     public boolean checkStartActivity(Intent intent, int callerUid, int callerPid,
-            String resolvedType, ApplicationInfo resolvedApp, String callerPackage, int userId) {
+            String resolvedType, ApplicationInfo resolvedApp, String callerPackage, int userId, int requestCode) {
         return checkIntent(mActivityResolver, intent.getComponent(), TYPE_ACTIVITY, intent,
-                callerUid, callerPid, resolvedType, resolvedApp.uid, callerPackage, userId);
+                callerUid, callerPid, resolvedType, resolvedApp.uid, callerPackage, userId, requestCode);
     }
 
     public boolean checkService(ComponentName resolvedService, Intent intent, int callerUid,
             int callerPid, String resolvedType, ApplicationInfo resolvedApp, String callerPackage, int userId) {
         return checkIntent(mServiceResolver, resolvedService, TYPE_SERVICE, intent, callerUid,
-                callerPid, resolvedType, resolvedApp.uid, callerPackage, userId);
+                callerPid, resolvedType, resolvedApp.uid, callerPackage, userId, -1);
     }
 
     public boolean checkBroadcast(Intent intent, int callerUid, int callerPid,
             String resolvedType, int receivingUid) {
         return checkIntent(mBroadcastResolver, intent.getComponent(), TYPE_BROADCAST, intent,
-                callerUid, callerPid, resolvedType, receivingUid, null, 0);
+                callerUid, callerPid, resolvedType, receivingUid, null, 0, -1);
     }
 
     public boolean checkIntent(FirewallIntentResolver resolver, ComponentName resolvedComponent,
             int intentType, Intent intent, int callerUid, int callerPid, String resolvedType,
-            int receivingUid, String callerPackage, int userId) {
+            int receivingUid, String callerPackage, int userId, int requestCode) {
 
         // Verbose Logging
         if (VERBOSE_LOGGING) {
             Slog.v(TAG, callerUid + " sent intent {");
+            if (requestCode > 0)
+                Slog.v(TAG, "  req code: " + requestCode);
             if (callerPackage != null)
                 Slog.v(TAG, "  from pkg: " + callerPackage);
             if (intent.getAction() != null)

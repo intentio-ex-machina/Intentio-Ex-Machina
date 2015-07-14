@@ -1429,7 +1429,7 @@ public final class ActivityStackSupervisor implements DisplayListener {
         }
 
         boolean abort = !mService.mIntentFirewall.checkStartActivity(intent, callingUid,
-                callingPid, resolvedType, aInfo.applicationInfo, callingPackage, userId);
+                callingPid, resolvedType, aInfo.applicationInfo, callingPackage, userId, requestCode);
 
         if (mService.mController != null) {
             try {
