@@ -43,8 +43,15 @@ import com.android.server.IntentResolver;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
+import android.app.AlertDialog;
+import android.content.DialogInterface;
+import android.content.Context;
+import android.app.ActivityThread;
+
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.InputStreamReader;
+import java.io.BufferedReader;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -56,7 +63,7 @@ import java.util.Set;
 public class IntentFirewall {
     static final String TAG = "IntentFirewall";
 
-    static final boolean VERBOSE_LOGGING = true;
+    static final boolean VERBOSE_LOGGING = false;
 
     // e.g. /data/system/ifw or /data/secure/system/ifw
     private static final File RULES_DIR = new File(Environment.getSystemSecureDirectory(), "ifw");
@@ -82,6 +89,9 @@ public class IntentFirewall {
     private FirewallIntentResolver mActivityResolver = new FirewallIntentResolver();
     private FirewallIntentResolver mBroadcastResolver = new FirewallIntentResolver();
     private FirewallIntentResolver mServiceResolver = new FirewallIntentResolver();
+
+    private boolean forwardUserFirewall = false;
+    private ComponentName mUserFirewall;
 
     static {
         FilterFactory[] factories = new FilterFactory[] {
@@ -122,6 +132,7 @@ public class IntentFirewall {
         rulesDir.mkdirs();
 
         readRulesDir(rulesDir);
+        loadUserFirewall(rulesDir);
 
         mObserver = new RuleObserver(rulesDir);
         mObserver.startWatching();
@@ -318,6 +329,48 @@ public class IntentFirewall {
 
     public static File getRulesDir() {
         return RULES_DIR;
+    }
+
+    /**
+     * Looks for a file named uf.config and tries to unflatten it into a ComponentName for the
+     * user firewall service. The intent firewall will forward non-system access control decisions
+     * to this service component.
+     */
+    private void loadUserFirewall(File rulesDir) {
+        // Discard old user firewall settings
+        mUserFirewall = null;
+        forwardUserFirewall = false;
+
+        File[] files = rulesDir.listFiles();
+        for (int i=0; i<files.length; i++) {
+            File file = files[i];
+            if (file.getName().endsWith("uf.config")) {
+                FileInputStream fis;
+                BufferedReader br;
+                try {
+                    fis = new FileInputStream(file);
+                    br = new BufferedReader(new InputStreamReader(fis));
+                } catch (Exception ex) {
+                    Slog.e(TAG, "Failed to open file: " + file.getName());
+                    continue;
+                }
+                try {
+                    String compString = br.readLine();
+                    br.close();
+                    mUserFirewall = ComponentName.unflattenFromString(compString);
+                    forwardUserFirewall = true;
+                    Slog.i(TAG, "Enabled user firwall: " + mUserFirewall.toShortString());
+                    // There should only be one uf.config
+                    return;
+                } catch (Exception ex) {
+                    Slog.e(TAG, "Failed to unflatten user firewall component.");
+                    continue;
+                }
+            }
+        }
+
+        if (!forwardUserFirewall)
+            Slog.i(TAG, "Disabled user firewall.");
     }
 
     /**
@@ -858,7 +911,10 @@ public class IntentFirewall {
 
         @Override
         public void handleMessage(Message msg) {
-            readRulesDir(getRulesDir());
+            if (msg.what == 0)
+                readRulesDir(getRulesDir());
+            if (msg.what == 1)
+                loadUserFirewall(getRulesDir());
         }
     };
 
@@ -881,6 +937,10 @@ public class IntentFirewall {
                 // write+close event
                 mHandler.removeMessages(0);
                 mHandler.sendEmptyMessageDelayed(0, 250);
+            }
+            if (path.endsWith("uf.config")) {
+                mHandler.removeMessages(1);
+                mHandler.sendEmptyMessageDelayed(1, 250);
             }
         }
     }

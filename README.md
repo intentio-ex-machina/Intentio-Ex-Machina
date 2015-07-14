@@ -20,6 +20,13 @@ ActivityStackSupervisor.java: `./frameworks/base/services/core/java/com/android/
 
 ActiveServices.java: `./frameworks/base/services/core/java/com/android/server/am/ActiveServices.java`
 
+User Firewall
+-------------
+
+A user application can become part of the firewall by creating a file named `uf.config` in the
+same directory which contains the rule XML files containing the application's firewall
+service component name.
+
 Filter Scheme
 -------------
 
