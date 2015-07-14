@@ -185,6 +185,7 @@ public class IntentFirewall {
             int intentType, Intent intent, int callerUid, int callerPid, String resolvedType,
             int receivingUid, String callerPackage, int userId) {
 
+        // Verbose Logging
         if (VERBOSE_LOGGING) {
             Slog.v(TAG, callerUid + " sent intent {");
             if (callerPackage != null)
@@ -200,6 +201,25 @@ public class IntentFirewall {
                 Slog.v(TAG, "    userId: " + userId);
             Slog.v(TAG, "}");
         }
+
+        // Mandatory Access Control
+        boolean mac = checkMAC(resolver, resolvedComponent, intentType, intent, callerUid,
+            callerPid, resolvedType, receivingUid, callerPackage, userId);
+
+        /* User firewall hook isn't implemented yet, so MAC is all we got. */
+        return mac;
+    }
+
+    /**
+     * Checks intent against intent firewall's rules to determine if the intent should be
+     * allowed and/or logged. Since these rules come from the intent firewall's rules list,
+     * this is mandatory access control.
+     *
+     * Returns true if the intent should be allowed.
+     */
+    private boolean checkMAC(FirewallIntentResolver resolver, ComponentName resolvedComponent,
+            int intentType, Intent intent, int callerUid, int callerPid, String resolvedType,
+            int receivingUid, String callerPackage, int userId) {
 
         boolean log = false;
         boolean block = false;
