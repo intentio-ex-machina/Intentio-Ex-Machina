@@ -16,6 +16,8 @@ in this repo:
 
 IntentFirewall.java: `./frameworks/base/services/core/java/com/android/server/firewall/IntentFirewall.java`
 
+ActivityManagerService.java: `./frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java`
+
 ActivityStackSupervisor.java: `./frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java`
 
 ActiveServices.java: `./frameworks/base/services/core/java/com/android/server/am/ActiveServices.java`
@@ -29,6 +31,9 @@ service component name.
 
 Filter Scheme
 -------------
+
+Mandatory access control (MAC) rules can be defined by placing an XML file containing the rules into the intent
+firewall directory (default /data/system/ifw). The rule files follow this scheme:
 
     <rules>
     

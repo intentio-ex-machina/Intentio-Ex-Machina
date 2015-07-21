@@ -24,11 +24,14 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
+import android.app.IApplicationThread;
+import android.app.ProfilerInfo;
 import android.content.pm.IPackageManager;
 import android.content.pm.PackageManager;
 import android.os.Environment;
 import android.os.FileObserver;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
 import android.os.RemoteException;
@@ -42,11 +45,6 @@ import com.android.server.EventLogTags;
 import com.android.server.IntentResolver;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
-
-import android.app.AlertDialog;
-import android.content.DialogInterface;
-import android.content.Context;
-import android.app.ActivityThread;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -138,33 +136,10 @@ public class IntentFirewall {
         mObserver.startWatching();
     }
 
-    /**
-     * Old calls for backwards compatibility.
-     */
-    public boolean checkStartActivity(Intent intent, int callerUid, int callerPid,
-           String resolvedType, ApplicationInfo resolvedApp) {
-        Slog.w(TAG, "Using old checkStartActivity call");
-
-        return checkStartActivity(intent, callerUid, callerPid,
-                resolvedType, resolvedApp, null, 0, -1);
-    }
-
-    public boolean checkService(ComponentName resolvedService, Intent intent, int callerUid,
-            int callerPid, String resolvedType, ApplicationInfo resolvedApp) {
-        Slog.w(TAG, "Using old checkService call");
-
-        return checkService(resolvedService, intent, callerUid, callerPid, resolvedType,
-            resolvedApp, null, 0);
-    }
-
-    /**
-     * This is called from ActivityManager to check if a start activity intent should be allowed.
-     * It is assumed the caller is already holding the global ActivityManagerService lock.
-     *
-     * Modified for the new intent firewall. Some parameters can be null if old method is called.
-     */
-    public boolean checkStartActivity(Intent intent, int callerUid, int callerPid,
-            String resolvedType, ApplicationInfo resolvedApp, String callerPackage, int userId, int requestCode) {
+    public boolean checkStartActivity(IApplicationThread caller, Intent intent, int callerUid,
+            int callerPid, String resolvedType, ApplicationInfo resolvedApp,
+            String callerPackage, int userId, int requestCode, IBinder resultTo,
+            String resultWho, int startFlags, Bundle options) {
         return checkIntent(mActivityResolver, intent.getComponent(), TYPE_ACTIVITY, intent,
                 callerUid, callerPid, resolvedType, resolvedApp.uid, callerPackage, userId, requestCode);
     }
@@ -971,10 +946,15 @@ public class IntentFirewall {
      * This interface contains the methods we need from ActivityManagerService. This allows AMS to
      * export these methods to us without making them public, and also makes it easier to test this
      * component.
+     *
+     * This interface must match the IntentFirewallInterface class defined in ActivityManagerService.java.
      */
     public interface AMSInterface {
         int checkComponentPermission(String permission, int pid, int uid,
                 int owningUid, boolean exported);
+        int startActivityAsUser(IApplicationThread caller, String callingPackage,
+                Intent intent, String resolvedType, IBinder resultTo, String resultWho, int requestCode,
+                int startFlags, ProfilerInfo profilerInfo, Bundle options, int userId);
         Object getAMSLock();
     }
 

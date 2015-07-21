@@ -1428,8 +1428,9 @@ public final class ActivityStackSupervisor implements DisplayListener {
             throw new SecurityException(msg);
         }
 
-        boolean abort = !mService.mIntentFirewall.checkStartActivity(intent, callingUid,
-                callingPid, resolvedType, aInfo.applicationInfo, callingPackage, userId, requestCode);
+        boolean abort = !mService.mIntentFirewall.checkStartActivity(caller, intent, callingUid,
+                callingPid, resolvedType, aInfo.applicationInfo, callingPackage, userId, requestCode,
+                resultTo, resultWho, startFlags, options);
 
         if (mService.mController != null) {
             try {
