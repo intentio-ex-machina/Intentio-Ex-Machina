@@ -38,6 +38,7 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.Messenger;
 import android.os.RemoteException;
+import android.os.UserHandle;
 import android.os.Bundle;
 import android.util.ArrayMap;
 import android.util.Slog;
@@ -82,6 +83,16 @@ public class IntentFirewall {
     private static final int TYPE_SERVICE   = 2;
 
     private static final int CHECK_INTENT = 1;
+
+    private static final int BLOCK_INTENT   = 0;
+    private static final int ALLOW_INTENT   = 1;
+    private static final int FORWARD_INTENT = 2;
+
+    private static final String IFW_TOKEN = "INTENT_FIREWALL_TOKEN";
+
+    private static final int TOKEN_VALID       = 0;
+    private static final int TOKEN_NOT_PRESENT = 1;
+    private static final int TOKEN_CORRUPT     = 2;
 
     private static final HashMap<String, FilterFactory> factoryMap;
 
@@ -146,6 +157,29 @@ public class IntentFirewall {
     }
 
     /**
+     * Given an intent, generates a token.
+     */
+    private String generateToken() {
+        // TODO
+        Slog.w(TAG, "Tokenizing algorithm not implemented, returning dummy value.");
+        return "I am not a secure token";
+    }
+
+    /**
+     * Checks an intent for a token and if it's there, validates it.
+     */
+    private int validateToken(Intent intent) {
+        String token = intent.getStringExtra(IFW_TOKEN);
+        if (token == null) return TOKEN_NOT_PRESENT;
+        String expectedToken = generateToken();
+        if (token == expectedToken) {
+            return TOKEN_VALID;
+        } else {
+            return TOKEN_CORRUPT;
+        }
+    }
+
+    /**
      * This is called from ActivityManager to check if a start activity intent should be allowed.
      * It is assumed the caller is already holding the global ActivityManagerService lock.
      */
@@ -153,51 +187,93 @@ public class IntentFirewall {
             int callerPid, String resolvedType, ApplicationInfo resolvedApp,
             String callerPackage, int userId, int requestCode, IBinder resultTo,
             String resultWho, int startFlags, Bundle options) {
-        return checkIntent(mActivityResolver, intent.getComponent(), TYPE_ACTIVITY, intent,
+        int res = checkIntent(mActivityResolver, intent.getComponent(), TYPE_ACTIVITY, intent,
                 callerUid, callerPid, resolvedType, resolvedApp.uid, callerPackage, userId, requestCode);
+        switch(res) {
+            case ALLOW_INTENT:
+                return true;
+            case BLOCK_INTENT:
+                return false;
+            case FORWARD_INTENT:
+                Slog.v(TAG, "TODO: Implement forwarding logic. Allowing for now...");
+                //TODO
+                return true;
+        }
+        // This should never happen
+        return false;
     }
 
     public boolean checkService(ComponentName resolvedService, Intent intent, int callerUid,
             int callerPid, String resolvedType, ApplicationInfo resolvedApp, String callerPackage, int userId) {
-        return checkIntent(mServiceResolver, resolvedService, TYPE_SERVICE, intent, callerUid,
+        int res = checkIntent(mServiceResolver, resolvedService, TYPE_SERVICE, intent, callerUid,
                 callerPid, resolvedType, resolvedApp.uid, callerPackage, userId, -1);
+        switch(res) {
+            case ALLOW_INTENT:
+                return true;
+            case BLOCK_INTENT:
+                return false;
+            case FORWARD_INTENT:
+                Slog.v(TAG, "TODO: Implement forwarding logic. Allowing for now...");
+                //TODO
+                return true;
+        }
+        // This should never happen
+        return false;
     }
 
     public boolean checkBroadcast(Intent intent, int callerUid, int callerPid,
             String resolvedType, int receivingUid) {
-        return checkIntent(mBroadcastResolver, intent.getComponent(), TYPE_BROADCAST, intent,
+        int res = checkIntent(mBroadcastResolver, intent.getComponent(), TYPE_BROADCAST, intent,
                 callerUid, callerPid, resolvedType, receivingUid, null, 0, -1);
+        switch(res) {
+            case ALLOW_INTENT:
+                return true;
+            case BLOCK_INTENT:
+                return false;
+            case FORWARD_INTENT:
+                Slog.v(TAG, "TODO: Implement forwarding logic. Allowing for now...");
+                //TODO
+                return true;
+        }
+        // This should never happen
+        return false;
     }
 
-    public boolean checkIntent(FirewallIntentResolver resolver, ComponentName resolvedComponent,
+    /**
+     * This method performs the bulk of the intent checking. It returns an int to advise the caller to either
+     * block the intent, allow the intent, or forward the intent to the user firewall.
+     */
+    public int checkIntent(FirewallIntentResolver resolver, ComponentName resolvedComponent,
             int intentType, Intent intent, int callerUid, int callerPid, String resolvedType,
             int receivingUid, String callerPackage, int userId, int requestCode) {
 
         // Verbose Logging
-        if (VERBOSE_LOGGING) {
-            Slog.v(TAG, callerUid + " sent intent {");
-            if (requestCode > 0)
-                Slog.v(TAG, "  req code: " + requestCode);
-            if (callerPackage != null)
-                Slog.v(TAG, "  from pkg: " + callerPackage);
-            if (intent.getAction() != null)
-                Slog.v(TAG, "    action: " + intent.getAction());
-            if (intent.getDataString() != null)
-                Slog.v(TAG, "      data: " + intent.getDataString());
-            if (resolvedComponent != null)
-                if (resolvedComponent.getPackageName() != null)
-                    Slog.v(TAG, "    to pkg: " + resolvedComponent.getPackageName());
-            if (userId > 0)
-                Slog.v(TAG, "    userId: " + userId);
-            Slog.v(TAG, "}");
-        }
+        if (VERBOSE_LOGGING)
+            verboseLogging(callerUid, requestCode, callerPackage, intent, resolvedComponent, userId);
 
         // Mandatory Access Control
         boolean mac = checkMAC(resolver, resolvedComponent, intentType, intent, callerUid,
             callerPid, resolvedType, receivingUid, callerPackage, userId);
+        // If it failed the MAC, get rid of it!
+        if (!mac) return BLOCK_INTENT;
 
-        /* User firewall hook isn't implemented yet, so MAC is all we got. */
-        return mac;
+        // If there isn't a userfirewall, then MAC is all we check
+        if (mUserFirewall == null) return ALLOW_INTENT;
+
+        // At this point, the intent has passed MAC and there is a user firewall. If it is an intent sent
+        // by system, we'll allow.
+        if (!UserHandle.isApp(callerUid)) return ALLOW_INTENT;
+
+        // If it isn't sent by system, then it was sent by a normal app. If it has a valid token, then it
+        // has already been through the user firewall and we can allow it. If it has no token, we'll advise
+        // the caller to tokenize and forward it. If there is a token but it's invalid, something bad has
+        // happened and this intent needs to be blocked.
+        int tokenCheck = validateToken(new Intent(intent));
+        if (tokenCheck == TOKEN_VALID) return ALLOW_INTENT;
+        if (tokenCheck == TOKEN_NOT_PRESENT) return FORWARD_INTENT;
+        // Token was corrupt. This is very bad.
+        Slog.w(TAG, "Received intent contains a corrupt token. Blocking.");
+        return BLOCK_INTENT;
     }
 
     /**
@@ -266,6 +342,28 @@ public class IntentFirewall {
         }
 
         return !block;
+    }
+
+    /**
+     * Logs some useful information about a received intent.
+     */
+    private void verboseLogging(int callerUid, int requestCode, String callerPackage, Intent intent,
+            ComponentName resolvedComponent, int userId) {
+        Slog.v(TAG, callerUid + " sent intent {");
+        if (requestCode > 0)
+            Slog.v(TAG, "  req code: " + requestCode);
+        if (callerPackage != null)
+            Slog.v(TAG, "  from pkg: " + callerPackage);
+        if (intent.getAction() != null)
+            Slog.v(TAG, "    action: " + intent.getAction());
+        if (intent.getDataString() != null)
+            Slog.v(TAG, "      data: " + intent.getDataString());
+        if (resolvedComponent != null)
+            if (resolvedComponent.getPackageName() != null)
+                Slog.v(TAG, "    to pkg: " + resolvedComponent.getPackageName());
+        if (userId > 0)
+            Slog.v(TAG, "    userId: " + userId);
+        Slog.v(TAG, "}");
     }
 
     private static void logIntent(int intentType, Intent intent, int callerUid,
@@ -347,6 +445,14 @@ public class IntentFirewall {
      * to this service component.
      */
     private void loadUserFirewall(File rulesDir) {
+        // If there currently is a user firewall, make sure we're unbound from it.
+        if (mUserFirewall != null) {
+            try {
+                mAms.getSystemContext().unbindService(mUFW_SC);
+            } catch (Exception e) {
+                Slog.w(TAG, "Tried to unbind from user firewall, but failed");
+            }
+        }
         // Discard old user firewall settings
         mUserFirewall = null;
         forwardUserFirewall = false;
