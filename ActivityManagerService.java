@@ -6955,6 +6955,11 @@ public final class ActivityManagerService extends ActivityManagerNative
         }
 
         @Override
+        public Context getSystemContext() {
+            return mContext;
+        }
+
+        @Override
         public Object getAMSLock() {
             return ActivityManagerService.this;
         }

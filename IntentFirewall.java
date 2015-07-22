@@ -21,9 +21,11 @@ package com.android.server.firewall;
 
 import android.app.AppGlobals;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
+import android.content.ServiceConnection;
 import android.app.IApplicationThread;
 import android.app.ProfilerInfo;
 import android.content.pm.IPackageManager;
@@ -34,6 +36,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
+import android.os.Messenger;
 import android.os.RemoteException;
 import android.os.Bundle;
 import android.util.ArrayMap;
@@ -61,7 +64,7 @@ import java.util.Set;
 public class IntentFirewall {
     static final String TAG = "IntentFirewall";
 
-    static final boolean VERBOSE_LOGGING = false;
+    private static final boolean VERBOSE_LOGGING = false;
 
     // e.g. /data/system/ifw or /data/secure/system/ifw
     private static final File RULES_DIR = new File(Environment.getSystemSecureDirectory(), "ifw");
@@ -69,14 +72,16 @@ public class IntentFirewall {
     private static final int LOG_PACKAGES_MAX_LENGTH = 150;
     private static final int LOG_PACKAGES_SUFFICIENT_LENGTH = 125;
 
-    private static final String TAG_RULES = "rules";
-    private static final String TAG_ACTIVITY = "activity";
-    private static final String TAG_SERVICE = "service";
+    private static final String TAG_RULES     = "rules";
+    private static final String TAG_ACTIVITY  = "activity";
+    private static final String TAG_SERVICE   = "service";
     private static final String TAG_BROADCAST = "broadcast";
 
-    private static final int TYPE_ACTIVITY = 0;
+    private static final int TYPE_ACTIVITY  = 0;
     private static final int TYPE_BROADCAST = 1;
-    private static final int TYPE_SERVICE = 2;
+    private static final int TYPE_SERVICE   = 2;
+
+    private static final int CHECK_INTENT = 1;
 
     private static final HashMap<String, FilterFactory> factoryMap;
 
@@ -88,8 +93,12 @@ public class IntentFirewall {
     private FirewallIntentResolver mBroadcastResolver = new FirewallIntentResolver();
     private FirewallIntentResolver mServiceResolver = new FirewallIntentResolver();
 
-    private boolean forwardUserFirewall = false;
-    private ComponentName mUserFirewall;
+    private static boolean forwardUserFirewall = false;
+    private static ComponentName mUserFirewall;
+
+    private UFWServiceConnection mUFW_SC = new UFWServiceConnection();
+    private Messenger mUFWMessenger = new Messenger(new UFWHandler());
+    private Messenger mUFWService;
 
     static {
         FilterFactory[] factories = new FilterFactory[] {
@@ -136,6 +145,10 @@ public class IntentFirewall {
         mObserver.startWatching();
     }
 
+    /**
+     * This is called from ActivityManager to check if a start activity intent should be allowed.
+     * It is assumed the caller is already holding the global ActivityManagerService lock.
+     */
     public boolean checkStartActivity(IApplicationThread caller, Intent intent, int callerUid,
             int callerPid, String resolvedType, ApplicationInfo resolvedApp,
             String callerPackage, int userId, int requestCode, IBinder resultTo,
@@ -355,10 +368,9 @@ public class IntentFirewall {
                     String compString = br.readLine();
                     br.close();
                     mUserFirewall = ComponentName.unflattenFromString(compString);
-                    forwardUserFirewall = true;
                     Slog.i(TAG, "Enabled user firwall: " + mUserFirewall.toShortString());
                     // There should only be one uf.config
-                    return;
+                    break;
                 } catch (Exception ex) {
                     Slog.e(TAG, "Failed to unflatten user firewall component.");
                     continue;
@@ -366,8 +378,15 @@ public class IntentFirewall {
             }
         }
 
-        if (!forwardUserFirewall)
+        if (mUserFirewall == null) {
             Slog.i(TAG, "Disabled user firewall.");
+        } else {
+            //Try to bind to UFW
+            Intent service = new Intent();
+            service.setComponent(mUserFirewall);
+            mAms.getSystemContext().bindService(service, mUFW_SC, Context.BIND_AUTO_CREATE);
+            Slog.i(TAG, "Sent bind request to user firewall.");
+        }
     }
 
     /**
@@ -955,6 +974,7 @@ public class IntentFirewall {
         int startActivityAsUser(IApplicationThread caller, String callingPackage,
                 Intent intent, String resolvedType, IBinder resultTo, String resultWho, int requestCode,
                 int startFlags, ProfilerInfo profilerInfo, Bundle options, int userId);
+        Context getSystemContext();
         Object getAMSLock();
     }
 
@@ -981,6 +1001,40 @@ public class IntentFirewall {
         } catch (RemoteException ex) {
             Slog.e(TAG, "Remote exception while checking signatures", ex);
             return false;
+        }
+    }
+
+    /**
+     * Interface so IFW can bind to UFW.
+     */
+    private class UFWServiceConnection implements ServiceConnection {
+
+        @Override
+        public void onServiceConnected(ComponentName comp, IBinder service) {
+            forwardUserFirewall = true;
+            Slog.i(TAG, "Connection to UFW established.");
+            // Store messenger
+            mUFWService = new Messenger(service);
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName comp) {
+            forwardUserFirewall = false;
+            mUFWService = null;
+            Slog.w(TAG, "Connection with UFW lost!");
+            //TODO
+        }
+    }
+
+    /**
+     * Handler for messages received from the UFW.
+     */
+    private class UFWHandler extends Handler {
+
+        @Override
+        public void handleMessage(Message msg) {
+            Slog.i(TAG, "Got message from UFW!");
+            //TODO
         }
     }
 
