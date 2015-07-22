@@ -65,8 +65,6 @@ import java.util.Set;
 public class IntentFirewall {
     static final String TAG = "IntentFirewall";
 
-    private static final boolean VERBOSE_LOGGING = false;
-
     // e.g. /data/system/ifw or /data/secure/system/ifw
     private static final File RULES_DIR = new File(Environment.getSystemSecureDirectory(), "ifw");
 
@@ -199,7 +197,6 @@ public class IntentFirewall {
                 //TODO
                 return true;
         }
-        // This should never happen
         return false;
     }
 
@@ -217,7 +214,6 @@ public class IntentFirewall {
                 //TODO
                 return true;
         }
-        // This should never happen
         return false;
     }
 
@@ -235,7 +231,6 @@ public class IntentFirewall {
                 //TODO
                 return true;
         }
-        // This should never happen
         return false;
     }
 
@@ -246,10 +241,6 @@ public class IntentFirewall {
     public int checkIntent(FirewallIntentResolver resolver, ComponentName resolvedComponent,
             int intentType, Intent intent, int callerUid, int callerPid, String resolvedType,
             int receivingUid, String callerPackage, int userId, int requestCode) {
-
-        // Verbose Logging
-        if (VERBOSE_LOGGING)
-            verboseLogging(callerUid, requestCode, callerPackage, intent, resolvedComponent, userId);
 
         // Mandatory Access Control
         boolean mac = checkMAC(resolver, resolvedComponent, intentType, intent, callerUid,
@@ -268,7 +259,7 @@ public class IntentFirewall {
         // has already been through the user firewall and we can allow it. If it has no token, we'll advise
         // the caller to tokenize and forward it. If there is a token but it's invalid, something bad has
         // happened and this intent needs to be blocked.
-        int tokenCheck = validateToken(new Intent(intent));
+        int tokenCheck = validateToken(intent);
         if (tokenCheck == TOKEN_VALID) return ALLOW_INTENT;
         if (tokenCheck == TOKEN_NOT_PRESENT) return FORWARD_INTENT;
         // Token was corrupt. This is very bad.
@@ -342,28 +333,6 @@ public class IntentFirewall {
         }
 
         return !block;
-    }
-
-    /**
-     * Logs some useful information about a received intent.
-     */
-    private void verboseLogging(int callerUid, int requestCode, String callerPackage, Intent intent,
-            ComponentName resolvedComponent, int userId) {
-        Slog.v(TAG, callerUid + " sent intent {");
-        if (requestCode > 0)
-            Slog.v(TAG, "  req code: " + requestCode);
-        if (callerPackage != null)
-            Slog.v(TAG, "  from pkg: " + callerPackage);
-        if (intent.getAction() != null)
-            Slog.v(TAG, "    action: " + intent.getAction());
-        if (intent.getDataString() != null)
-            Slog.v(TAG, "      data: " + intent.getDataString());
-        if (resolvedComponent != null)
-            if (resolvedComponent.getPackageName() != null)
-                Slog.v(TAG, "    to pkg: " + resolvedComponent.getPackageName());
-        if (userId > 0)
-            Slog.v(TAG, "    userId: " + userId);
-        Slog.v(TAG, "}");
     }
 
     private static void logIntent(int intentType, Intent intent, int callerUid,
@@ -450,7 +419,7 @@ public class IntentFirewall {
             try {
                 mAms.getSystemContext().unbindService(mUFW_SC);
             } catch (Exception e) {
-                Slog.w(TAG, "Tried to unbind from user firewall, but failed");
+                Slog.w(TAG, "Tried to unbind from user firewall, but failed.");
             }
         }
         // Discard old user firewall settings
