@@ -381,11 +381,24 @@ public class IntentFirewall {
         if (mUserFirewall == null) {
             Slog.i(TAG, "Disabled user firewall.");
         } else {
-            //Try to bind to UFW
-            Intent service = new Intent();
-            service.setComponent(mUserFirewall);
-            mAms.getSystemContext().bindService(service, mUFW_SC, Context.BIND_AUTO_CREATE);
-            Slog.i(TAG, "Sent bind request to user firewall.");
+            bindToUFW();
+        }
+    }
+
+    /**
+     * Attempt to bind to the user firewall.
+     */
+    private void bindToUFW() {
+        if (mUserFirewall != null) {
+            try {
+                Intent service = new Intent();
+                service.setComponent(mUserFirewall);
+                mAms.getSystemContext().bindService(service, mUFW_SC, Context.BIND_AUTO_CREATE);
+                Slog.i(TAG, "Sent bind request to user firewall.");
+            } catch (Exception e) {
+                Slog.w(TAG, "Unable to find user firewall, retrying later...");
+                mHandler.sendEmptyMessageDelayed(2, 5000);
+            }
         }
     }
 
@@ -931,6 +944,8 @@ public class IntentFirewall {
                 readRulesDir(getRulesDir());
             if (msg.what == 1)
                 loadUserFirewall(getRulesDir());
+            if (msg.what == 2)
+                bindToUFW();
         }
     };
 
@@ -1022,7 +1037,7 @@ public class IntentFirewall {
             forwardUserFirewall = false;
             mUFWService = null;
             Slog.w(TAG, "Connection with UFW lost!");
-            //TODO
+            mHandler.sendEmptyMessageDelayed(1, 250);
         }
     }
 
