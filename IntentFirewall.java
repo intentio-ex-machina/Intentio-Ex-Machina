@@ -20,6 +20,7 @@
 package com.android.server.firewall;
 
 import android.app.AppGlobals;
+import android.app.ApplicationThreadNative;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -158,7 +159,7 @@ public class IntentFirewall {
      * Given an intent, generates a token.
      */
     private String generateToken() {
-        // TODO
+        //TODO implement tokenizer
         Slog.w(TAG, "Tokenizing algorithm not implemented, returning dummy value.");
         return "I am not a secure token";
     }
@@ -170,10 +171,37 @@ public class IntentFirewall {
         String token = intent.getStringExtra(IFW_TOKEN);
         if (token == null) return TOKEN_NOT_PRESENT;
         String expectedToken = generateToken();
-        if (token == expectedToken) {
-            return TOKEN_VALID;
-        } else {
-            return TOKEN_CORRUPT;
+        if (expectedToken.equals(token)) return TOKEN_VALID;
+        return TOKEN_CORRUPT;
+    }
+
+    private void sendActivityToUserFirewall(IApplicationThread caller, String callingPackage,
+            Intent intent, String resolvedType, IBinder resultTo, String resultWho, int requestCode,
+            int startFlags, Bundle options, int userId) {
+        // Tokenize intent
+        intent.putExtra(IFW_TOKEN, generateToken());
+        // Package bundle
+        Bundle data = new Bundle();
+        data.putBinder("caller", caller.asBinder());
+        data.putString("callingPackage", callingPackage);
+        data.putParcelable("intent", intent);
+        data.putInt("intentType", TYPE_ACTIVITY);
+        data.putString("resolvedType", resolvedType);
+        data.putBinder("resultTo", resultTo);
+        data.putString("resultWho", resultWho);
+        data.putInt("requestCode", requestCode);
+        data.putInt("startFlags", startFlags);
+        data.putBundle("options", options);
+        data.putInt("userId", userId);
+        // Prepare message
+        Message msg = Message.obtain(null, CHECK_INTENT);
+        msg.setData(data);
+        msg.replyTo = mUFWMessenger;
+        // Send message
+        try {
+            mUFWService.send(msg);
+        } catch (RemoteException e) {
+            Slog.w(TAG, "Failed to send check intent message to user firewall.");
         }
     }
 
@@ -193,9 +221,9 @@ public class IntentFirewall {
             case BLOCK_INTENT:
                 return false;
             case FORWARD_INTENT:
-                Slog.v(TAG, "TODO: Implement forwarding logic. Allowing for now...");
-                //TODO
-                return true;
+                sendActivityToUserFirewall(caller, callerPackage, intent, resolvedType, resultTo, resultWho,
+                    requestCode, startFlags, options, userId);
+                return false;
         }
         return false;
     }
@@ -211,7 +239,7 @@ public class IntentFirewall {
                 return false;
             case FORWARD_INTENT:
                 Slog.v(TAG, "TODO: Implement forwarding logic. Allowing for now...");
-                //TODO
+                //TODO implement service forwarding
                 return true;
         }
         return false;
@@ -228,7 +256,7 @@ public class IntentFirewall {
                 return false;
             case FORWARD_INTENT:
                 Slog.v(TAG, "TODO: Implement forwarding logic. Allowing for now...");
-                //TODO
+                //TODO implement broadcast forwarding
                 return true;
         }
         return false;
@@ -1123,9 +1151,37 @@ public class IntentFirewall {
 
         @Override
         public void handleMessage(Message msg) {
-            Slog.i(TAG, "Got message from UFW!");
-            //TODO
+            switch (msg.what) {
+                case CHECK_INTENT:
+                    Bundle data = msg.getData();
+                    if (data == null) break;
+                    int intentType = data.getInt("intentType", -1);
+                    if (intentType == TYPE_ACTIVITY)
+                        sendActivityAsUser(data);
+                    if (intentType == TYPE_SERVICE) //TODO implement service as user
+                        break;
+                    if (intentType == TYPE_BROADCAST) //TODO implement broadcast as user
+                        break;
+            }
         }
+    }
+
+    private void sendActivityAsUser(Bundle data) {
+        IApplicationThread caller = ApplicationThreadNative.asInterface(data.getBinder("caller"));
+        String callingPackage = data.getString("callingPackage");
+        Intent intent = data.getParcelable("intent");
+        String resolvedType = data.getString("resolvedType");
+        IBinder resultTo = data.getBinder("resultTo");
+        String resultWho = data.getString("resultWho");
+        int requestCode = data.getInt("requestCode");
+        int startFlags = data.getInt("startFlags");
+        Bundle options = data.getBundle("options");
+        int userId = data.getInt("userId");
+
+        int res =  mAms.startActivityAsUser(caller, callingPackage, intent, resolvedType, resultTo,
+            resultWho, requestCode, startFlags, null, options, userId);
+
+        if (res < 0) Slog.w(TAG, "AMS startActivityAsUser returned error: " + res);
     }
 
     /**
