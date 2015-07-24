@@ -28,6 +28,7 @@ import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.ServiceConnection;
 import android.app.IApplicationThread;
+import android.app.IServiceConnection;
 import android.app.ProfilerInfo;
 import android.content.pm.IPackageManager;
 import android.content.pm.PackageManager;
@@ -205,6 +206,31 @@ public class IntentFirewall {
         }
     }
 
+    private void sendServiceToUserFirewall(IApplicationThread caller, IBinder token, Intent service,
+            String resolvedType, IServiceConnection connection, int flags, int userId) {
+        // Tokenize intent
+        service.putExtra(IFW_TOKEN, generateToken());
+        // Package bundle
+        Bundle data = new Bundle();
+        if (caller != null) data.putBinder("caller", caller.asBinder());
+        if (token != null) data.putBinder("token", token);
+        data.putParcelable("intent", service);
+        data.putInt("intentType", TYPE_SERVICE);
+        data.putString("resolvedType", resolvedType);
+        if (connection != null) data.putBinder("connection", connection.asBinder());
+        data.putInt("flags", flags);
+        data.putInt("userId", userId);
+        // Prepare message
+        Message msg = Message.obtain(null, CHECK_INTENT);
+        msg.setData(data);
+        msg.replyTo = mUFWMessenger;
+        try {
+            mUFWService.send(msg);
+        } catch (RemoteException e) {
+            Slog.w(TAG, "Failed to send check intent message to user firewall.");
+        }
+    }
+
     /**
      * This is called from ActivityManager to check if a start activity intent should be allowed.
      * It is assumed the caller is already holding the global ActivityManagerService lock.
@@ -228,8 +254,9 @@ public class IntentFirewall {
         return false;
     }
 
-    public boolean checkService(ComponentName resolvedService, Intent intent, int callerUid,
-            int callerPid, String resolvedType, ApplicationInfo resolvedApp, String callerPackage, int userId) {
+    public boolean checkService(IApplicationThread caller, IBinder token, IServiceConnection connection,
+            ComponentName resolvedService, Intent intent, int callerUid,
+            int callerPid, String resolvedType, ApplicationInfo resolvedApp, String callerPackage, int flags, int userId) {
         int res = checkIntent(mServiceResolver, resolvedService, TYPE_SERVICE, intent, callerUid,
                 callerPid, resolvedType, resolvedApp.uid, callerPackage, userId, -1);
         switch(res) {
@@ -238,9 +265,8 @@ public class IntentFirewall {
             case BLOCK_INTENT:
                 return false;
             case FORWARD_INTENT:
-                Slog.v(TAG, "TODO: Implement forwarding logic. Allowing for now...");
-                //TODO implement service forwarding
-                return true;
+                sendServiceToUserFirewall(caller, token, intent, resolvedType, connection, flags, userId);
+                return false;
         }
         return false;
     }
@@ -1092,6 +1118,13 @@ public class IntentFirewall {
         int startActivityAsUser(IApplicationThread caller, String callingPackage,
                 Intent intent, String resolvedType, IBinder resultTo, String resultWho, int requestCode,
                 int startFlags, ProfilerInfo profilerInfo, Bundle options, int userId);
+        int bindService(IApplicationThread caller, IBinder token,
+                Intent service, String resolvedType,
+                IServiceConnection connection, int flags, int userId);
+        ComponentName startService(IApplicationThread caller, Intent service,
+                String resolvedType, int userId);
+        int stopService(IApplicationThread caller, Intent service,
+                String resolvedType, int userId);
         Context getSystemContext();
         Object getAMSLock();
     }
@@ -1158,8 +1191,8 @@ public class IntentFirewall {
                     int intentType = data.getInt("intentType", -1);
                     if (intentType == TYPE_ACTIVITY)
                         sendActivityAsUser(data);
-                    if (intentType == TYPE_SERVICE) //TODO implement service as user
-                        break;
+                    if (intentType == TYPE_SERVICE)
+                        sendServiceAsUser(data);
                     if (intentType == TYPE_BROADCAST) //TODO implement broadcast as user
                         break;
             }
@@ -1182,6 +1215,38 @@ public class IntentFirewall {
             resultWho, requestCode, startFlags, null, options, userId);
 
         if (res < 0) Slog.w(TAG, "AMS startActivityAsUser returned error: " + res);
+    }
+
+    private void sendServiceAsUser(Bundle data) {
+        //Determine how this service needs to be sent
+        Intent intent = data.getParcelable("intent");
+        String serviceAction = intent.getStringExtra("IFW_SERVICE_ACTION");
+        if (serviceAction == null) {
+            Slog.w(TAG, "Received service intent from user firewall with no API mark!");
+            return;
+        }
+
+        if (serviceAction.equals("start")) {
+            IApplicationThread caller = ApplicationThreadNative.asInterface(data.getBinder("caller"));
+            String resolvedType = data.getString("resolvedType");
+            int userId = data.getInt("userId");
+            mAms.startService(caller, intent, resolvedType, userId);
+        }
+        if (serviceAction.equals("bind")) {
+            IApplicationThread caller = ApplicationThreadNative.asInterface(data.getBinder("caller"));
+            IBinder token = data.getBinder("token");
+            String resolvedType = data.getString("resolvedType");
+            IServiceConnection connection = IServiceConnection.Stub.asInterface(data.getBinder("connection"));
+            int flags = data.getInt("flags");
+            int userId = data.getInt("userId");
+            mAms.bindService(caller, token, intent, resolvedType, connection, flags, userId);
+        }
+        if (serviceAction.equals("stop")) {
+            IApplicationThread caller = ApplicationThreadNative.asInterface(data.getBinder("caller"));
+            String resolvedType = data.getString("resolvedType");
+            int userId = data.getInt("userId");
+            mAms.stopService(caller, intent, resolvedType, userId);
+        }
     }
 
     /**
