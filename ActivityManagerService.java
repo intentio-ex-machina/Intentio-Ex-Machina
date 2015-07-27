@@ -6962,6 +6962,11 @@ public final class ActivityManagerService extends ActivityManagerNative
         }
 
         @Override
+        public IBinder peekService(Intent service, String resolvedType) {
+            return ActivityManagerService.this.peekService(service, resolvedType);
+        }
+
+        @Override
         public ComponentName startService(IApplicationThread caller, Intent service,
                 String resolvedType, int userId) {
             return ActivityManagerService.this.startService(caller, service, resolvedType, userId);
@@ -14723,8 +14728,6 @@ public final class ActivityManagerService extends ActivityManagerNative
             throw new IllegalArgumentException("File descriptors passed in Intent");
         }
 
-        // Mark for intent firewall
-        service.putExtra("IFW_SERVICE_ACTION", "start");
         if (DEBUG_SERVICE)
             Slog.v(TAG, "startService: " + service + " type=" + resolvedType);
         synchronized(this) {
@@ -14760,8 +14763,6 @@ public final class ActivityManagerService extends ActivityManagerNative
             throw new IllegalArgumentException("File descriptors passed in Intent");
         }
 
-        // Mark for intent firewall
-        service.putExtra("IFW_SERVICE_ACTION", "stop");
         synchronized(this) {
             return mServices.stopServiceLocked(caller, service, resolvedType, userId);
         }
@@ -14955,8 +14956,6 @@ public final class ActivityManagerService extends ActivityManagerNative
             throw new IllegalArgumentException("File descriptors passed in Intent");
         }
 
-        // Mark for intent firewall
-        service.putExtra("IFW_SERVICE_ACTION", "bind");
         synchronized(this) {
             return mServices.bindServiceLocked(caller, token, service, resolvedType,
                     connection, flags, userId);

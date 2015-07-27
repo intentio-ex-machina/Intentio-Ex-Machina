@@ -89,6 +89,7 @@ public class IntentFirewall {
     private static final int FORWARD_INTENT = 2;
 
     private static final String IFW_TOKEN = "INTENT_FIREWALL_TOKEN";
+    private static final String IFW_SERVICE_ACTION = "IFW_SERVICE_ACTION";
 
     private static final int TOKEN_VALID       = 0;
     private static final int TOKEN_NOT_PRESENT = 1;
@@ -161,7 +162,6 @@ public class IntentFirewall {
      */
     private String generateToken() {
         //TODO implement tokenizer
-        Slog.w(TAG, "Tokenizing algorithm not implemented, returning dummy value.");
         return "I am not a secure token";
     }
 
@@ -169,10 +169,15 @@ public class IntentFirewall {
      * Checks an intent for a token and if it's there, validates it.
      */
     private int validateToken(Intent intent) {
-        String token = intent.getStringExtra(IFW_TOKEN);
+        String token;
+        try {
+            token = intent.getStringExtra(IFW_TOKEN);
+        } catch (Exception e) {
+            Slog.w(TAG, "Unexpected error while trying to validate IFW token.");
+            return TOKEN_NOT_PRESENT;
+        }
         if (token == null) return TOKEN_NOT_PRESENT;
-        String expectedToken = generateToken();
-        if (expectedToken.equals(token)) return TOKEN_VALID;
+        if (generateToken().equals(token)) return TOKEN_VALID;
         return TOKEN_CORRUPT;
     }
 
@@ -183,7 +188,7 @@ public class IntentFirewall {
         intent.putExtra(IFW_TOKEN, generateToken());
         // Package bundle
         Bundle data = new Bundle();
-        data.putBinder("caller", caller.asBinder());
+        if (caller != null) data.putBinder("caller", caller.asBinder());
         data.putString("callingPackage", callingPackage);
         data.putParcelable("intent", intent);
         data.putInt("intentType", TYPE_ACTIVITY);
@@ -207,13 +212,14 @@ public class IntentFirewall {
     }
 
     private void sendServiceToUserFirewall(IApplicationThread caller, IBinder token, Intent service,
-            String resolvedType, IServiceConnection connection, int flags, int userId) {
+            String resolvedType, IServiceConnection connection, int flags, int userId, String action) {
         // Tokenize intent
         service.putExtra(IFW_TOKEN, generateToken());
         // Package bundle
         Bundle data = new Bundle();
         if (caller != null) data.putBinder("caller", caller.asBinder());
-        if (token != null) data.putBinder("token", token);
+        data.putBinder("token", token);
+        data.putString(IFW_SERVICE_ACTION, action);
         data.putParcelable("intent", service);
         data.putInt("intentType", TYPE_SERVICE);
         data.putString("resolvedType", resolvedType);
@@ -239,7 +245,8 @@ public class IntentFirewall {
             int callerPid, String resolvedType, ApplicationInfo resolvedApp,
             String callerPackage, int userId, int requestCode, IBinder resultTo,
             String resultWho, int startFlags, Bundle options) {
-        int res = checkIntent(mActivityResolver, intent.getComponent(), TYPE_ACTIVITY, intent,
+        Intent mIntent = new Intent(intent);
+        int res = checkIntent(mActivityResolver, mIntent.getComponent(), TYPE_ACTIVITY, mIntent,
                 callerUid, callerPid, resolvedType, resolvedApp.uid, callerPackage, userId, requestCode);
         switch(res) {
             case ALLOW_INTENT:
@@ -247,7 +254,7 @@ public class IntentFirewall {
             case BLOCK_INTENT:
                 return false;
             case FORWARD_INTENT:
-                sendActivityToUserFirewall(caller, callerPackage, intent, resolvedType, resultTo, resultWho,
+                sendActivityToUserFirewall(caller, callerPackage, mIntent, resolvedType, resultTo, resultWho,
                     requestCode, startFlags, options, userId);
                 return false;
         }
@@ -255,9 +262,10 @@ public class IntentFirewall {
     }
 
     public boolean checkService(IApplicationThread caller, IBinder token, IServiceConnection connection,
-            ComponentName resolvedService, Intent intent, int callerUid,
-            int callerPid, String resolvedType, ApplicationInfo resolvedApp, String callerPackage, int flags, int userId) {
-        int res = checkIntent(mServiceResolver, resolvedService, TYPE_SERVICE, intent, callerUid,
+            ComponentName resolvedService, Intent intent, int callerUid, int callerPid, String resolvedType,
+            ApplicationInfo resolvedApp, String callerPackage, int flags, int userId, String action) {
+        Intent mIntent = new Intent(intent);
+        int res = checkIntent(mServiceResolver, resolvedService, TYPE_SERVICE, mIntent, callerUid,
                 callerPid, resolvedType, resolvedApp.uid, callerPackage, userId, -1);
         switch(res) {
             case ALLOW_INTENT:
@@ -265,15 +273,16 @@ public class IntentFirewall {
             case BLOCK_INTENT:
                 return false;
             case FORWARD_INTENT:
-                sendServiceToUserFirewall(caller, token, intent, resolvedType, connection, flags, userId);
-                return false;
+                //sendServiceToUserFirewall(caller, token, mIntent, resolvedType, connection, flags, userId, action);
+                return true;
         }
         return false;
     }
 
     public boolean checkBroadcast(Intent intent, int callerUid, int callerPid,
             String resolvedType, int receivingUid) {
-        int res = checkIntent(mBroadcastResolver, intent.getComponent(), TYPE_BROADCAST, intent,
+        Intent mIntent = new Intent(intent);
+        int res = checkIntent(mBroadcastResolver, mIntent.getComponent(), TYPE_BROADCAST, mIntent,
                 callerUid, callerPid, resolvedType, receivingUid, null, 0, -1);
         switch(res) {
             case ALLOW_INTENT:
@@ -281,7 +290,6 @@ public class IntentFirewall {
             case BLOCK_INTENT:
                 return false;
             case FORWARD_INTENT:
-                Slog.v(TAG, "TODO: Implement forwarding logic. Allowing for now...");
                 //TODO implement broadcast forwarding
                 return true;
         }
@@ -1121,6 +1129,7 @@ public class IntentFirewall {
         int bindService(IApplicationThread caller, IBinder token,
                 Intent service, String resolvedType,
                 IServiceConnection connection, int flags, int userId);
+        IBinder peekService(Intent service, String resolvedType);
         ComponentName startService(IApplicationThread caller, Intent service,
                 String resolvedType, int userId);
         int stopService(IApplicationThread caller, Intent service,
@@ -1220,7 +1229,7 @@ public class IntentFirewall {
     private void sendServiceAsUser(Bundle data) {
         //Determine how this service needs to be sent
         Intent intent = data.getParcelable("intent");
-        String serviceAction = intent.getStringExtra("IFW_SERVICE_ACTION");
+        String serviceAction = data.getString(IFW_SERVICE_ACTION);
         if (serviceAction == null) {
             Slog.w(TAG, "Received service intent from user firewall with no API mark!");
             return;
@@ -1246,6 +1255,10 @@ public class IntentFirewall {
             String resolvedType = data.getString("resolvedType");
             int userId = data.getInt("userId");
             mAms.stopService(caller, intent, resolvedType, userId);
+        }
+        if (serviceAction.equals("peek")) {
+            String resolvedType = data.getString("resolvedType");
+            mAms.peekService(intent, resolvedType);
         }
     }
 
