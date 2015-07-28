@@ -317,6 +317,10 @@ public class IntentFirewall {
         // by system, we'll allow.
         if (!UserHandle.isApp(callerUid)) return ALLOW_INTENT;
 
+        // Also, if it's an intra-app intent, we'll allow it.
+        if (resolvedComponent != null && resolvedComponent.getPackageName().equals(callerPackage))
+            return ALLOW_INTENT;
+
         // If it isn't sent by system, then it was sent by a normal app. If it has a valid token, then it
         // has already been through the user firewall and we can allow it. If it has no token, we'll advise
         // the caller to tokenize and forward it. If there is a token but it's invalid, something bad has
