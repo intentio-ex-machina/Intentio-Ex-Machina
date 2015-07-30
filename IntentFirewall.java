@@ -173,8 +173,8 @@ public class IntentFirewall {
         try {
             token = intent.getStringExtra(IFW_TOKEN);
         } catch (Exception e) {
-            Slog.w(TAG, "Unexpected error while trying to validate IFW token.");
-            return TOKEN_NOT_PRESENT;
+            Slog.e(TAG, "Failed to validate IFW token: " + e.getMessage());
+            return TOKEN_CORRUPT;
         }
         if (token == null) return TOKEN_NOT_PRESENT;
         if (generateToken().equals(token)) return TOKEN_VALID;
@@ -213,6 +213,11 @@ public class IntentFirewall {
 
     private void sendServiceToUserFirewall(IApplicationThread caller, IBinder token, Intent service,
             String resolvedType, IServiceConnection connection, int flags, int userId, String action) {
+        // Make sure user firewall is bound
+        if (mUFWService == null) {
+            Slog.w(TAG, "User firewall is enabled, but not bound yet. Dropping service intent.");
+            return;
+        }
         // Tokenize intent
         service.putExtra(IFW_TOKEN, generateToken());
         // Package bundle
@@ -273,8 +278,14 @@ public class IntentFirewall {
             case BLOCK_INTENT:
                 return false;
             case FORWARD_INTENT:
-                //sendServiceToUserFirewall(caller, token, mIntent, resolvedType, connection, flags, userId, action);
-                return true;
+                /** Debugging bypasses **/
+                //if (action.equals("peek")) return true;
+                //if (action.equals("bind")) return true;
+                //if (action.equals("start")) return true;
+                //if (action.equals("stop")) return true;
+                /** Debugging bypasses **/
+                sendServiceToUserFirewall(caller, token, mIntent, resolvedType, connection, flags, userId, action);
+                return false;
         }
         return false;
     }
@@ -329,7 +340,7 @@ public class IntentFirewall {
         if (tokenCheck == TOKEN_VALID) return ALLOW_INTENT;
         if (tokenCheck == TOKEN_NOT_PRESENT) return FORWARD_INTENT;
         // Token was corrupt. This is very bad.
-        Slog.w(TAG, "Received intent contains a corrupt token. Blocking.");
+        Slog.w(TAG, "Corrupted token from " + callerPackage + ", Uid " + callerUid+ ". Blocking.");
         return BLOCK_INTENT;
     }
 
@@ -1081,12 +1092,17 @@ public class IntentFirewall {
 
         @Override
         public void handleMessage(Message msg) {
-            if (msg.what == 0)
-                readRulesDir(getRulesDir());
-            if (msg.what == 1)
-                loadUserFirewall(getRulesDir());
-            if (msg.what == 2)
-                bindToUFW();
+            switch (msg.what) {
+                case 0:
+                    readRulesDir(getRulesDir());
+                    break;
+                case 1:
+                    loadUserFirewall(getRulesDir());
+                    break;
+                case 2:
+                    bindToUFW();
+                    break;
+            }
         }
     };
 
