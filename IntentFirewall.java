@@ -175,13 +175,7 @@ public class IntentFirewall {
      * Checks an intent for a token and if it's there, validates it.
      */
     private int validateToken(Intent intent) {
-        String token;
-        try {
-            token = intent.getStringExtra(IFW_TOKEN);
-        } catch (Exception e) {
-            Slog.e(TAG, "Failed to validate IFW token: " + e.getMessage());
-            return TOKEN_CORRUPT;
-        }
+        String token = intent.ifwToken;
         if (token == null) return TOKEN_NOT_PRESENT;
         if (generateToken().equals(token)) return TOKEN_VALID;
         return TOKEN_CORRUPT;
@@ -191,7 +185,7 @@ public class IntentFirewall {
             Intent intent, String resolvedType, IBinder resultTo, String resultWho, int requestCode,
             int startFlags, Bundle options, int userId) {
         // Tokenize intent
-        intent.putExtra(IFW_TOKEN, generateToken());
+        intent.ifwToken = generateToken();
         // Package bundle
         Bundle data = new Bundle();
         if (caller != null) data.putBinder("caller", caller.asBinder());
@@ -272,8 +266,7 @@ public class IntentFirewall {
             int callerPid, String resolvedType, ApplicationInfo resolvedApp,
             String callerPackage, int userId, int requestCode, IBinder resultTo,
             String resultWho, int startFlags, Bundle options) {
-        Intent mIntent = new Intent(intent);
-        int res = checkIntent(mActivityResolver, mIntent.getComponent(), TYPE_ACTIVITY, mIntent,
+        int res = checkIntent(mActivityResolver, intent.getComponent(), TYPE_ACTIVITY, intent,
                 callerUid, callerPid, resolvedType, resolvedApp.uid, callerPackage, userId, requestCode);
         switch(res) {
             case ALLOW_INTENT:
@@ -281,7 +274,7 @@ public class IntentFirewall {
             case BLOCK_INTENT:
                 return false;
             case FORWARD_INTENT:
-                sendActivityToUserFirewall(caller, callerPackage, mIntent, resolvedType, resultTo, resultWho,
+                sendActivityToUserFirewall(caller, callerPackage, intent, resolvedType, resultTo, resultWho,
                     requestCode, startFlags, options, userId);
                 return false;
         }
@@ -291,8 +284,7 @@ public class IntentFirewall {
     public boolean checkService(IApplicationThread caller, IBinder token, IServiceConnection connection,
             ComponentName resolvedService, Intent intent, int callerUid, int callerPid, String resolvedType,
             ApplicationInfo resolvedApp, String callerPackage, int flags, int userId, String action) {
-        Intent mIntent = new Intent(intent);
-        int res = checkIntent(mServiceResolver, resolvedService, TYPE_SERVICE, mIntent, callerUid,
+        int res = checkIntent(mServiceResolver, resolvedService, TYPE_SERVICE, intent, callerUid,
                 callerPid, resolvedType, resolvedApp.uid, callerPackage, userId, -1);
         switch(res) {
             case ALLOW_INTENT:
@@ -300,15 +292,15 @@ public class IntentFirewall {
             case BLOCK_INTENT:
                 return false;
             case FORWARD_INTENT:
-                return sendServiceToUserFirewall(caller, token, mIntent, resolvedType, connection, flags, userId, action);
+                return sendServiceToUserFirewall(caller, token, intent, resolvedType,
+                    connection, flags, userId, action);
         }
         return false;
     }
 
     public boolean checkBroadcast(Intent intent, int callerUid, int callerPid,
             String resolvedType, int receivingUid) {
-        Intent mIntent = new Intent(intent);
-        int res = checkIntent(mBroadcastResolver, mIntent.getComponent(), TYPE_BROADCAST, mIntent,
+        int res = checkIntent(mBroadcastResolver, intent.getComponent(), TYPE_BROADCAST, intent,
                 callerUid, callerPid, resolvedType, receivingUid, null, 0, -1);
         switch(res) {
             case ALLOW_INTENT:
@@ -355,7 +347,7 @@ public class IntentFirewall {
         if (tokenCheck == TOKEN_VALID) return ALLOW_INTENT;
         if (tokenCheck == TOKEN_NOT_PRESENT) return FORWARD_INTENT;
         // Token was corrupt. This is very bad.
-        Slog.w(TAG, "Corrupted token from " + callerPackage + ", Uid " + callerUid+ ". Blocking.");
+        Slog.w(TAG, "Blocking corrupted token from " + callerPackage);
         return BLOCK_INTENT;
     }
 
