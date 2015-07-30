@@ -112,6 +112,12 @@ public class IntentFirewall {
     private Messenger mUFWMessenger = new Messenger(new UFWHandler());
     private Messenger mUFWService;
 
+    private int blockId = 0;
+    private HashMap<Integer, Bundle> blockData = new HashMap<Integer, Bundle>();
+    private HashMap<Integer, Object> blockObject = new HashMap<Integer, Object>();
+    private static final int UFW_BLOCK_TIMEOUT = 1000;
+    private static final String IFW_BLOCK_ID = "IFW_BLOCK_ID";
+
     static {
         FilterFactory[] factories = new FilterFactory[] {
                 AndFilter.FACTORY,
@@ -211,26 +217,26 @@ public class IntentFirewall {
         }
     }
 
-    private void sendServiceToUserFirewall(IApplicationThread caller, IBinder token, Intent service,
+    private boolean sendServiceToUserFirewall(IApplicationThread caller, IBinder token, Intent service,
             String resolvedType, IServiceConnection connection, int flags, int userId, String action) {
         // Make sure user firewall is bound
         if (mUFWService == null) {
             Slog.w(TAG, "User firewall is enabled, but not bound yet. Dropping service intent.");
-            return;
+            return false;
         }
-        // Tokenize intent
-        service.putExtra(IFW_TOKEN, generateToken());
         // Package bundle
         Bundle data = new Bundle();
         if (caller != null) data.putBinder("caller", caller.asBinder());
-        data.putBinder("token", token);
         data.putString(IFW_SERVICE_ACTION, action);
         data.putParcelable("intent", service);
         data.putInt("intentType", TYPE_SERVICE);
         data.putString("resolvedType", resolvedType);
-        if (connection != null) data.putBinder("connection", connection.asBinder());
-        data.putInt("flags", flags);
         data.putInt("userId", userId);
+        // Id bundle
+        Integer mInt;
+        mInt = new Integer(blockId);
+        blockId++;
+        data.putInt(IFW_BLOCK_ID, mInt.intValue());
         // Prepare message
         Message msg = Message.obtain(null, CHECK_INTENT);
         msg.setData(data);
@@ -239,7 +245,23 @@ public class IntentFirewall {
             mUFWService.send(msg);
         } catch (RemoteException e) {
             Slog.w(TAG, "Failed to send check intent message to user firewall.");
+            return false;
         }
+        // Wait for reply
+        Object mObj = new Object();
+        blockObject.put(mInt, mObj);
+        try {
+            synchronized(mObj) {
+                mObj.wait(UFW_BLOCK_TIMEOUT);
+            }
+        } catch (InterruptedException e) {
+            Slog.w(TAG, "Thread waiting for reply from user firewall interrupted.");
+        }
+        // Thread has awoken, check for reply. For now, a reply means allow and no reply
+        // means block.
+        data = blockData.remove(mInt);
+        if (data != null) return true;
+        return false;
     }
 
     /**
@@ -278,14 +300,7 @@ public class IntentFirewall {
             case BLOCK_INTENT:
                 return false;
             case FORWARD_INTENT:
-                /** Debugging bypasses **/
-                //if (action.equals("peek")) return true;
-                //if (action.equals("bind")) return true;
-                //if (action.equals("start")) return true;
-                //if (action.equals("stop")) return true;
-                /** Debugging bypasses **/
-                sendServiceToUserFirewall(caller, token, mIntent, resolvedType, connection, flags, userId, action);
-                return false;
+                return sendServiceToUserFirewall(caller, token, mIntent, resolvedType, connection, flags, userId, action);
         }
         return false;
     }
@@ -1247,38 +1262,16 @@ public class IntentFirewall {
     }
 
     private void sendServiceAsUser(Bundle data) {
-        //Determine how this service needs to be sent
-        Intent intent = data.getParcelable("intent");
-        String serviceAction = data.getString(IFW_SERVICE_ACTION);
-        if (serviceAction == null) {
-            Slog.w(TAG, "Received service intent from user firewall with no API mark!");
-            return;
-        }
-
-        if (serviceAction.equals("start")) {
-            IApplicationThread caller = ApplicationThreadNative.asInterface(data.getBinder("caller"));
-            String resolvedType = data.getString("resolvedType");
-            int userId = data.getInt("userId");
-            mAms.startService(caller, intent, resolvedType, userId);
-        }
-        if (serviceAction.equals("bind")) {
-            IApplicationThread caller = ApplicationThreadNative.asInterface(data.getBinder("caller"));
-            IBinder token = data.getBinder("token");
-            String resolvedType = data.getString("resolvedType");
-            IServiceConnection connection = IServiceConnection.Stub.asInterface(data.getBinder("connection"));
-            int flags = data.getInt("flags");
-            int userId = data.getInt("userId");
-            mAms.bindService(caller, token, intent, resolvedType, connection, flags, userId);
-        }
-        if (serviceAction.equals("stop")) {
-            IApplicationThread caller = ApplicationThreadNative.asInterface(data.getBinder("caller"));
-            String resolvedType = data.getString("resolvedType");
-            int userId = data.getInt("userId");
-            mAms.stopService(caller, intent, resolvedType, userId);
-        }
-        if (serviceAction.equals("peek")) {
-            String resolvedType = data.getString("resolvedType");
-            mAms.peekService(intent, resolvedType);
+        // Determine who this Bundle belongs to
+        Integer mInt = new Integer(data.getInt(IFW_BLOCK_ID));
+        // Store bundle for this receiver
+        blockData.put(mInt, data);
+        // Try to wake up receiver
+        Object mObj = blockObject.remove(mInt);
+        if (mObj != null) {
+            synchronized(mObj) {
+                mObj.notifyAll();
+            }
         }
     }
 
