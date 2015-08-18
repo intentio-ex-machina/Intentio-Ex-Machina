@@ -27,6 +27,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.ServiceConnection;
+import android.content.IIntentReceiver;
 import android.app.IApplicationThread;
 import android.app.IServiceConnection;
 import android.app.ProfilerInfo;
@@ -258,6 +259,38 @@ public class IntentFirewall {
         return false;
     }
 
+    private void sendBroadcastToUserFirewall(IApplicationThread caller, Intent intent,
+            String resolvedType, IIntentReceiver resultTo, int resultCode, String resultData, Bundle map,
+            String requiredPermission, int appOp, boolean serialized, boolean sticky, int userId) {
+        // Tokenize intent
+        intent.ifwToken = generateToken();
+        // Package bundle
+        Bundle data = new Bundle();
+        if (caller != null) data.putBinder("caller", caller.asBinder());
+        data.putParcelable("intent", intent);
+        data.putInt("intentType", TYPE_BROADCAST);
+        data.putString("resolvedType", resolvedType);
+        if (resultTo != null) data.putBinder("resultTo", resultTo.asBinder());
+        data.putInt("resultCode", resultCode);
+        data.putString("resultData", resultData);
+        data.putBundle("map", map);
+        data.putString("requiredPermission", requiredPermission);
+        data.putInt("appOp", appOp);
+        data.putBoolean("serialized", serialized);
+        data.putBoolean("sticky", sticky);
+        data.putInt("userId", userId);
+        // Prepare message
+        Message msg = Message.obtain(null, CHECK_INTENT);
+        msg.setData(data);
+        msg.replyTo = mUFWMessenger;
+        // Send message
+        try {
+            mUFWService.send(msg);
+        } catch (RemoteException e) {
+            Slog.w(TAG, "Failed to send check intent message to user firewall.");
+        }
+    }
+
     /**
      * This is called from ActivityManager to check if a start activity intent should be allowed.
      * It is assumed the caller is already holding the global ActivityManagerService lock.
@@ -298,8 +331,9 @@ public class IntentFirewall {
         return false;
     }
 
-    public boolean checkBroadcast(Intent intent, int callerUid, int callerPid,
-            String resolvedType, int receivingUid) {
+    public boolean checkBroadcast(IApplicationThread caller, Intent intent, int callerUid, int callerPid,
+            String resolvedType, IIntentReceiver resultTo, int resultCode, String resultData, Bundle map,
+            String requiredPermission, int appOp, boolean serialized, boolean sticky, int receivingUid, int userId) {
         int res = checkIntent(mBroadcastResolver, intent.getComponent(), TYPE_BROADCAST, intent,
                 callerUid, callerPid, resolvedType, receivingUid, null, 0, -1);
         switch(res) {
@@ -308,8 +342,9 @@ public class IntentFirewall {
             case BLOCK_INTENT:
                 return false;
             case FORWARD_INTENT:
-                //TODO implement broadcast forwarding
-                return true;
+                sendBroadcastToUserFirewall(caller, intent, resolvedType, resultTo, resultCode, resultData,
+                    map, requiredPermission, appOp, serialized, sticky, userId);
+                return false;
         }
         return false;
     }
@@ -1161,6 +1196,9 @@ public class IntentFirewall {
                 String resolvedType, int userId);
         int stopService(IApplicationThread caller, Intent service,
                 String resolvedType, int userId);
+        int broadcastIntent(IApplicationThread caller, Intent intent, String resolvedType, IIntentReceiver resultTo,
+                int resultCode, String resultData, Bundle map, String requiredPermission, int appOp,
+                boolean serialized, boolean sticky, int userId);
         Context getSystemContext();
         Object getAMSLock();
     }
@@ -1229,8 +1267,9 @@ public class IntentFirewall {
                         sendActivityAsUser(data);
                     if (intentType == TYPE_SERVICE)
                         sendServiceAsUser(data);
-                    if (intentType == TYPE_BROADCAST) //TODO implement broadcast as user
-                        break;
+                    if (intentType == TYPE_BROADCAST)
+                        sendBroadcastAsUser(data);
+                break;
             }
         }
     }
@@ -1265,6 +1304,26 @@ public class IntentFirewall {
                 mObj.notifyAll();
             }
         }
+    }
+
+    private void sendBroadcastAsUser(Bundle data) {
+        IApplicationThread caller = ApplicationThreadNative.asInterface(data.getBinder("caller"));
+        Intent intent = data.getParcelable("intent");
+        String resolvedType = data.getString("resolvedType");
+        IIntentReceiver resultTo = IIntentReceiver.Stub.asInterface(data.getBinder("resultTo"));
+        int resultCode = data.getInt("resultCode");
+        String resultData = data.getString("resultData");
+        Bundle map = data.getBundle("map");
+        String requiredPermission = data.getString("requiredPermission");
+        int appOp = data.getInt("appOp");
+        boolean serialized = data.getBoolean("serialized");
+        boolean sticky = data.getBoolean("sticky");
+        int userId = data.getInt("userId");
+
+        int res = mAms.broadcastIntent(caller, intent, resolvedType, resultTo, resultCode, resultData, map,
+            requiredPermission, appOp, serialized, sticky, userId);
+
+        if (res < 0) Slog.w(TAG, "AMS broadcastIntent returned error: " + res);
     }
 
     /**
