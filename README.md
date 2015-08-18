@@ -22,6 +22,10 @@ ActivityStackSupervisor.java: `./frameworks/base/services/core/java/com/android/
 
 ActiveServices.java: `./frameworks/base/services/core/java/com/android/server/am/ActiveServices.java`
 
+BroadcastQueue.java: `./frameworks/base/services/core/java/com/android/server/am/BroadcastQueue.java`
+
+Intent.java: `./frameworks/base/core/java/android/content`
+
 User Firewall
 -------------
 

@@ -6979,6 +6979,14 @@ public final class ActivityManagerService extends ActivityManagerNative
         }
 
         @Override
+         public int broadcastIntent(IApplicationThread caller, Intent intent, String resolvedType, IIntentReceiver resultTo,
+                 int resultCode, String resultData, Bundle map, String requiredPermission, int appOp, boolean serialized,
+                 boolean sticky, int userId) {
+            return ActivityManagerService.this.broadcastIntent(caller, intent, resolvedType, resultTo, resultCode, resultData,
+                map, requiredPermission, appOp, serialized, sticky, userId);
+        }
+
+        @Override
         public Context getSystemContext() {
             return mContext;
         }
