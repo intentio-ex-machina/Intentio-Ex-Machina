@@ -293,22 +293,22 @@ public class IntentFirewall {
         return false;
     }
 
-    public boolean checkService(IApplicationThread caller, IBinder token, IServiceConnection connection,
+    public int checkService(IApplicationThread caller, IBinder token, IServiceConnection connection,
             ComponentName resolvedService, Intent intent, int callerUid, int callerPid, String resolvedType,
             ApplicationInfo resolvedApp, String callerPackage, int flags, int userId, String action) {
         int res = checkIntent(mServiceResolver, resolvedService, TYPE_SERVICE, intent, callerUid,
                 callerPid, resolvedType, resolvedApp.uid, callerPackage, userId, -1);
         switch(res) {
             case ALLOW_INTENT:
-                return true;
+                return 0;
             case BLOCK_INTENT:
-                return false;
+                return 1;
             case FORWARD_INTENT:
                 sendServiceToUserFirewall(caller, token, intent, resolvedType, connection, flags, userId,
                     action);
-                return false;
+                return 2;
         }
-        return false;
+        return 1;
     }
 
     public boolean checkBroadcast(IApplicationThread caller, Intent intent, int callerUid, int callerPid,
@@ -349,10 +349,6 @@ public class IntentFirewall {
         // At this point, the intent has passed MAC and there is a user firewall. If it is an intent sent
         // by system, we'll allow.
         if (!UserHandle.isApp(callerUid)) return ALLOW_INTENT;
-
-        // Also, if it's an intra-app intent, we'll allow it.
-        if (resolvedComponent != null && resolvedComponent.getPackageName().equals(callerPackage))
-            return ALLOW_INTENT;
 
         // If it isn't sent by system, then it was sent by a normal app. If it has a valid token, then it
         // has already been through the user firewall and we can allow it. If it has no token, we'll advise
