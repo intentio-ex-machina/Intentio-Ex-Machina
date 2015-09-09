@@ -20,18 +20,28 @@
 package com.android.server.firewall;
 
 import android.app.AppGlobals;
+import android.app.ApplicationThreadNative;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
+import android.content.ServiceConnection;
+import android.content.IIntentReceiver;
+import android.app.IApplicationThread;
+import android.app.IServiceConnection;
+import android.app.ProfilerInfo;
 import android.content.pm.IPackageManager;
 import android.content.pm.PackageManager;
 import android.os.Environment;
 import android.os.FileObserver;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
+import android.os.Messenger;
 import android.os.RemoteException;
+import android.os.UserHandle;
 import android.os.Bundle;
 import android.util.ArrayMap;
 import android.util.Slog;
@@ -45,6 +55,8 @@ import org.xmlpull.v1.XmlPullParserException;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.InputStreamReader;
+import java.io.BufferedReader;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -56,22 +68,33 @@ import java.util.Set;
 public class IntentFirewall {
     static final String TAG = "IntentFirewall";
 
-    static final boolean VERBOSE_LOGGING = true;
-
     // e.g. /data/system/ifw or /data/secure/system/ifw
     private static final File RULES_DIR = new File(Environment.getSystemSecureDirectory(), "ifw");
 
     private static final int LOG_PACKAGES_MAX_LENGTH = 150;
     private static final int LOG_PACKAGES_SUFFICIENT_LENGTH = 125;
 
-    private static final String TAG_RULES = "rules";
-    private static final String TAG_ACTIVITY = "activity";
-    private static final String TAG_SERVICE = "service";
+    private static final String TAG_RULES     = "rules";
+    private static final String TAG_ACTIVITY  = "activity";
+    private static final String TAG_SERVICE   = "service";
     private static final String TAG_BROADCAST = "broadcast";
 
-    private static final int TYPE_ACTIVITY = 0;
+    private static final int TYPE_ACTIVITY  = 0;
     private static final int TYPE_BROADCAST = 1;
-    private static final int TYPE_SERVICE = 2;
+    private static final int TYPE_SERVICE   = 2;
+
+    private static final int CHECK_INTENT = 1;
+
+    private static final int BLOCK_INTENT   = 0;
+    private static final int ALLOW_INTENT   = 1;
+    private static final int FORWARD_INTENT = 2;
+
+    private static final String IFW_TOKEN = "INTENT_FIREWALL_TOKEN";
+    private static final String IFW_SERVICE_ACTION = "IFW_SERVICE_ACTION";
+
+    private static final int TOKEN_VALID       = 0;
+    private static final int TOKEN_NOT_PRESENT = 1;
+    private static final int TOKEN_CORRUPT     = 2;
 
     private static final HashMap<String, FilterFactory> factoryMap;
 
@@ -82,6 +105,13 @@ public class IntentFirewall {
     private FirewallIntentResolver mActivityResolver = new FirewallIntentResolver();
     private FirewallIntentResolver mBroadcastResolver = new FirewallIntentResolver();
     private FirewallIntentResolver mServiceResolver = new FirewallIntentResolver();
+
+    private static boolean forwardUserFirewall = false;
+    private static ComponentName mUserFirewall;
+
+    private UFWServiceConnection mUFW_SC = new UFWServiceConnection();
+    private Messenger mUFWMessenger = new Messenger(new UFWHandler());
+    private Messenger mUFWService;
 
     static {
         FilterFactory[] factories = new FilterFactory[] {
@@ -122,73 +152,226 @@ public class IntentFirewall {
         rulesDir.mkdirs();
 
         readRulesDir(rulesDir);
+        loadUserFirewall(rulesDir);
 
         mObserver = new RuleObserver(rulesDir);
         mObserver.startWatching();
     }
 
     /**
-     * Old calls for backwards compatibility.
+     * Given an intent, generates a token.
      */
-    public boolean checkStartActivity(Intent intent, int callerUid, int callerPid,
-           String resolvedType, ApplicationInfo resolvedApp) {
-        Slog.w(TAG, "Using old checkStartActivity call");
-
-        return checkStartActivity(intent, callerUid, callerPid,
-                resolvedType, resolvedApp, null, 0);
+    private String generateToken() {
+        //TODO implement tokenizer
+        return "I am not a secure token";
     }
 
-    public boolean checkService(ComponentName resolvedService, Intent intent, int callerUid,
-            int callerPid, String resolvedType, ApplicationInfo resolvedApp) {
-        Slog.w(TAG, "Using old checkService call");
+    /**
+     * Checks an intent for a token and if it's there, validates it.
+     */
+    private int validateToken(Intent intent) {
+        String token = intent.ifwToken;
+        if (token == null) return TOKEN_NOT_PRESENT;
+        if (generateToken().equals(token)) return TOKEN_VALID;
+        return TOKEN_CORRUPT;
+    }
 
-        return checkService(resolvedService, intent, callerUid, callerPid, resolvedType,
-            resolvedApp, null, 0);
+    private void sendActivityToUserFirewall(IApplicationThread caller, String callingPackage,
+            Intent intent, String resolvedType, IBinder resultTo, String resultWho, int requestCode,
+            int startFlags, Bundle options, int userId) {
+        // Tokenize intent
+        intent.ifwToken = generateToken();
+        // Package bundle
+        Bundle data = new Bundle();
+        if (caller != null) data.putBinder("caller", caller.asBinder());
+        data.putString("callingPackage", callingPackage);
+        data.putParcelable("intent", intent);
+        data.putInt("intentType", TYPE_ACTIVITY);
+        data.putString("resolvedType", resolvedType);
+        data.putBinder("resultTo", resultTo);
+        data.putString("resultWho", resultWho);
+        data.putInt("requestCode", requestCode);
+        data.putInt("startFlags", startFlags);
+        data.putBundle("options", options);
+        data.putInt("userId", userId);
+        // Prepare message
+        Message msg = Message.obtain(null, CHECK_INTENT);
+        msg.setData(data);
+        msg.replyTo = mUFWMessenger;
+        // Send message
+        try {
+            mUFWService.send(msg);
+        } catch (RemoteException e) {
+            Slog.w(TAG, "Failed to send check intent message to user firewall.");
+        }
+    }
+
+    private void sendServiceToUserFirewall(IApplicationThread caller, IBinder token, Intent service,
+            String resolvedType, IServiceConnection connection, int flags, int userId, String action) {
+        // Make sure user firewall is bound
+        if (mUFWService == null) {
+            Slog.w(TAG, "User firewall is enabled, but not bound yet. Dropping service intent.");
+            return;
+        }
+        // Tokenize intent
+        service.ifwToken = generateToken();
+        // Package bundle
+        Bundle data = new Bundle();
+        if (caller != null) data.putBinder("caller", caller.asBinder());
+        data.putBinder("token", token);
+        data.putString(IFW_SERVICE_ACTION, action);
+        data.putParcelable("intent", service);
+        data.putInt("intentType", TYPE_SERVICE);
+        data.putString("resolvedType", resolvedType);
+        if (connection != null) data.putBinder("connection", connection.asBinder());
+        data.putInt("flags", flags);
+        data.putInt("userId", userId);
+        // Prepare message
+        Message msg = Message.obtain(null, CHECK_INTENT);
+        msg.setData(data);
+        msg.replyTo = mUFWMessenger;
+        try {
+            mUFWService.send(msg);
+        } catch (RemoteException e) {
+            Slog.w(TAG, "Failed to send check intent message to user firewall.");
+            return;
+        }
+    }
+
+    private void sendBroadcastToUserFirewall(IApplicationThread caller, Intent intent,
+            String resolvedType, IIntentReceiver resultTo, int resultCode, String resultData, Bundle map,
+            String requiredPermission, int appOp, boolean serialized, boolean sticky, int userId) {
+        // Tokenize intent
+        intent.ifwToken = generateToken();
+        // Package bundle
+        Bundle data = new Bundle();
+        if (caller != null) data.putBinder("caller", caller.asBinder());
+        data.putParcelable("intent", intent);
+        data.putInt("intentType", TYPE_BROADCAST);
+        data.putString("resolvedType", resolvedType);
+        if (resultTo != null) data.putBinder("resultTo", resultTo.asBinder());
+        data.putInt("resultCode", resultCode);
+        data.putString("resultData", resultData);
+        data.putBundle("map", map);
+        data.putString("requiredPermission", requiredPermission);
+        data.putInt("appOp", appOp);
+        data.putBoolean("serialized", serialized);
+        data.putBoolean("sticky", sticky);
+        data.putInt("userId", userId);
+        // Prepare message
+        Message msg = Message.obtain(null, CHECK_INTENT);
+        msg.setData(data);
+        msg.replyTo = mUFWMessenger;
+        // Send message
+        try {
+            mUFWService.send(msg);
+        } catch (RemoteException e) {
+            Slog.w(TAG, "Failed to send check intent message to user firewall.");
+        }
     }
 
     /**
      * This is called from ActivityManager to check if a start activity intent should be allowed.
      * It is assumed the caller is already holding the global ActivityManagerService lock.
-     *
-     * Modified for the new intent firewall. Some parameters can be null if old method is called.
      */
-    public boolean checkStartActivity(Intent intent, int callerUid, int callerPid,
-            String resolvedType, ApplicationInfo resolvedApp, String callerPackage, int userId) {
-        return checkIntent(mActivityResolver, intent.getComponent(), TYPE_ACTIVITY, intent,
-                callerUid, callerPid, resolvedType, resolvedApp.uid, callerPackage, userId);
+    public boolean checkStartActivity(IApplicationThread caller, Intent intent, int callerUid,
+            int callerPid, String resolvedType, ApplicationInfo resolvedApp,
+            String callerPackage, int userId, int requestCode, IBinder resultTo,
+            String resultWho, int startFlags, Bundle options) {
+        int res = checkIntent(mActivityResolver, intent.getComponent(), TYPE_ACTIVITY, intent,
+                callerUid, callerPid, resolvedType, resolvedApp.uid, callerPackage, userId, requestCode);
+        switch(res) {
+            case ALLOW_INTENT:
+                return true;
+            case BLOCK_INTENT:
+                return false;
+            case FORWARD_INTENT:
+                sendActivityToUserFirewall(caller, callerPackage, intent, resolvedType, resultTo, resultWho,
+                    requestCode, startFlags, options, userId);
+                return false;
+        }
+        return false;
     }
 
-    public boolean checkService(ComponentName resolvedService, Intent intent, int callerUid,
-            int callerPid, String resolvedType, ApplicationInfo resolvedApp, String callerPackage, int userId) {
-        return checkIntent(mServiceResolver, resolvedService, TYPE_SERVICE, intent, callerUid,
-                callerPid, resolvedType, resolvedApp.uid, callerPackage, userId);
+    public int checkService(IApplicationThread caller, IBinder token, IServiceConnection connection,
+            ComponentName resolvedService, Intent intent, int callerUid, int callerPid, String resolvedType,
+            ApplicationInfo resolvedApp, String callerPackage, int flags, int userId, String action) {
+        int res = checkIntent(mServiceResolver, resolvedService, TYPE_SERVICE, intent, callerUid,
+                callerPid, resolvedType, resolvedApp.uid, callerPackage, userId, -1);
+        switch(res) {
+            case ALLOW_INTENT:
+                return 0;
+            case BLOCK_INTENT:
+                return 1;
+            case FORWARD_INTENT:
+                sendServiceToUserFirewall(caller, token, intent, resolvedType, connection, flags, userId,
+                    action);
+                return 2;
+        }
+        return 1;
     }
 
-    public boolean checkBroadcast(Intent intent, int callerUid, int callerPid,
-            String resolvedType, int receivingUid) {
-        return checkIntent(mBroadcastResolver, intent.getComponent(), TYPE_BROADCAST, intent,
-                callerUid, callerPid, resolvedType, receivingUid, null, 0);
+    public boolean checkBroadcast(IApplicationThread caller, Intent intent, int callerUid, int callerPid,
+            String resolvedType, IIntentReceiver resultTo, int resultCode, String resultData, Bundle map,
+            String requiredPermission, int appOp, boolean serialized, boolean sticky, int receivingUid, int userId) {
+        int res = checkIntent(mBroadcastResolver, intent.getComponent(), TYPE_BROADCAST, intent,
+                callerUid, callerPid, resolvedType, receivingUid, null, 0, -1);
+        switch(res) {
+            case ALLOW_INTENT:
+                return true;
+            case BLOCK_INTENT:
+                return false;
+            case FORWARD_INTENT:
+                sendBroadcastToUserFirewall(caller, intent, resolvedType, resultTo, resultCode, resultData,
+                    map, requiredPermission, appOp, serialized, sticky, userId);
+                return false;
+        }
+        return false;
     }
 
-    public boolean checkIntent(FirewallIntentResolver resolver, ComponentName resolvedComponent,
+    /**
+     * This method performs the bulk of the intent checking. It returns an int to advise the caller to either
+     * block the intent, allow the intent, or forward the intent to the user firewall.
+     */
+    public int checkIntent(FirewallIntentResolver resolver, ComponentName resolvedComponent,
+            int intentType, Intent intent, int callerUid, int callerPid, String resolvedType,
+            int receivingUid, String callerPackage, int userId, int requestCode) {
+
+        // Mandatory Access Control
+        boolean mac = checkMAC(resolver, resolvedComponent, intentType, intent, callerUid,
+            callerPid, resolvedType, receivingUid, callerPackage, userId);
+        // If it failed the MAC, get rid of it!
+        if (!mac) return BLOCK_INTENT;
+
+        // If there isn't a userfirewall, then MAC is all we check
+        if (mUserFirewall == null) return ALLOW_INTENT;
+
+        // At this point, the intent has passed MAC and there is a user firewall. If it is an intent sent
+        // by system, we'll allow.
+        if (!UserHandle.isApp(callerUid)) return ALLOW_INTENT;
+
+        // If it isn't sent by system, then it was sent by a normal app. If it has a valid token, then it
+        // has already been through the user firewall and we can allow it. If it has no token, we'll advise
+        // the caller to tokenize and forward it. If there is a token but it's invalid, something bad has
+        // happened and this intent needs to be blocked.
+        int tokenCheck = validateToken(intent);
+        if (tokenCheck == TOKEN_VALID) return ALLOW_INTENT;
+        if (tokenCheck == TOKEN_NOT_PRESENT) return FORWARD_INTENT;
+        // Token was corrupt. This is very bad.
+        Slog.w(TAG, "Blocking corrupted token from " + callerPackage);
+        return BLOCK_INTENT;
+    }
+
+    /**
+     * Checks intent against intent firewall's rules to determine if the intent should be
+     * allowed and/or logged. Since these rules come from the intent firewall's rules list,
+     * this is mandatory access control.
+     *
+     * Returns true if the intent should be allowed.
+     */
+    private boolean checkMAC(FirewallIntentResolver resolver, ComponentName resolvedComponent,
             int intentType, Intent intent, int callerUid, int callerPid, String resolvedType,
             int receivingUid, String callerPackage, int userId) {
-
-        if (VERBOSE_LOGGING) {
-            Slog.v(TAG, callerUid + " sent intent {");
-            if (callerPackage != null)
-                Slog.v(TAG, "  from pkg: " + callerPackage);
-            if (intent.getAction() != null)
-                Slog.v(TAG, "    action: " + intent.getAction());
-            if (intent.getDataString() != null)
-                Slog.v(TAG, "      data: " + intent.getDataString());
-            if (resolvedComponent != null)
-                if (resolvedComponent.getPackageName() != null)
-                    Slog.v(TAG, "    to pkg: " + resolvedComponent.getPackageName());
-            if (userId > 0)
-                Slog.v(TAG, "    userId: " + userId);
-            Slog.v(TAG, "}");
-        }
 
         boolean log = false;
         boolean block = false;
@@ -318,6 +501,75 @@ public class IntentFirewall {
 
     public static File getRulesDir() {
         return RULES_DIR;
+    }
+
+    /**
+     * Looks for a file named uf.config and tries to unflatten it into a ComponentName for the
+     * user firewall service. The intent firewall will forward non-system access control decisions
+     * to this service component.
+     */
+    private void loadUserFirewall(File rulesDir) {
+        // If there currently is a user firewall, make sure we're unbound from it.
+        if (mUserFirewall != null) {
+            try {
+                mAms.getSystemContext().unbindService(mUFW_SC);
+            } catch (Exception e) {
+                Slog.w(TAG, "Tried to unbind from user firewall, but failed.");
+            }
+        }
+        // Discard old user firewall settings
+        mUserFirewall = null;
+        forwardUserFirewall = false;
+
+        File[] files = rulesDir.listFiles();
+        for (int i=0; i<files.length; i++) {
+            File file = files[i];
+            if (file.getName().endsWith("uf.config")) {
+                FileInputStream fis;
+                BufferedReader br;
+                try {
+                    fis = new FileInputStream(file);
+                    br = new BufferedReader(new InputStreamReader(fis));
+                } catch (Exception ex) {
+                    Slog.e(TAG, "Failed to open file: " + file.getName());
+                    continue;
+                }
+                try {
+                    String compString = br.readLine();
+                    br.close();
+                    mUserFirewall = ComponentName.unflattenFromString(compString);
+                    Slog.i(TAG, "Enabled user firwall: " + mUserFirewall.toShortString());
+                    // There should only be one uf.config
+                    break;
+                } catch (Exception ex) {
+                    Slog.e(TAG, "Failed to unflatten user firewall component.");
+                    continue;
+                }
+            }
+        }
+
+        if (mUserFirewall == null) {
+            Slog.i(TAG, "Disabled user firewall.");
+        } else {
+            bindToUFW();
+        }
+    }
+
+    /**
+     * Attempt to bind to the user firewall.
+     */
+    private void bindToUFW() {
+        if (mUserFirewall != null) {
+            try {
+                Intent service = new Intent();
+                service.setComponent(mUserFirewall);
+                mAms.getSystemContext().bindService(service, mUFW_SC, Context.BIND_AUTO_CREATE);
+                Slog.i(TAG, "Sent bind request to user firewall.");
+            } catch (Exception e) {
+                Slog.w(TAG, "Unable to find user firewall, retrying later...");
+                mHandler.sendEmptyMessageDelayed(2, 5000);
+            }
+        }
     }
 
     /**
@@ -858,7 +1110,17 @@ public class IntentFirewall {
 
         @Override
         public void handleMessage(Message msg) {
-            readRulesDir(getRulesDir());
+            switch (msg.what) {
+                case 0:
+                    readRulesDir(getRulesDir());
+                    break;
+                case 1:
+                    loadUserFirewall(getRulesDir());
+                    break;
+                case 2:
+                    bindToUFW();
+                    break;
+            }
         }
     };
 
@@ -882,6 +1144,10 @@ public class IntentFirewall {
                 mHandler.removeMessages(0);
                 mHandler.sendEmptyMessageDelayed(0, 250);
             }
+            if (path.endsWith("uf.config")) {
+                mHandler.removeMessages(1);
+                mHandler.sendEmptyMessageDelayed(1, 250);
+            }
         }
     }
 
@@ -889,10 +1155,27 @@ public class IntentFirewall {
      * This interface contains the methods we need from ActivityManagerService. This allows AMS to
      * export these methods to us without making them public, and also makes it easier to test this
      * component.
+     *
+     * This interface must match the IntentFirewallInterface class defined in ActivityManagerService.java.
      */
     public interface AMSInterface {
         int checkComponentPermission(String permission, int pid, int uid,
                 int owningUid, boolean exported);
+        int startActivityAsUser(IApplicationThread caller, String callingPackage,
+                Intent intent, String resolvedType, IBinder resultTo, String resultWho, int requestCode,
+                int startFlags, ProfilerInfo profilerInfo, Bundle options, int userId);
+        int bindService(IApplicationThread caller, IBinder token,
+                Intent service, String resolvedType,
+                IServiceConnection connection, int flags, int userId);
+        IBinder peekService(Intent service, String resolvedType);
+        ComponentName startService(IApplicationThread caller, Intent service,
+                String resolvedType, int userId);
+        int stopService(IApplicationThread caller, Intent service,
+                String resolvedType, int userId);
+        int broadcastIntent(IApplicationThread caller, Intent intent, String resolvedType, IIntentReceiver resultTo,
+                int resultCode, String resultData, Bundle map, String requiredPermission, int appOp,
+                boolean serialized, boolean sticky, int userId);
+        Context getSystemContext();
         Object getAMSLock();
     }
 
@@ -920,6 +1203,125 @@ public class IntentFirewall {
             Slog.e(TAG, "Remote exception while checking signatures", ex);
             return false;
         }
+    }
+
+    /**
+     * Interface so IFW can bind to UFW.
+     */
+    private class UFWServiceConnection implements ServiceConnection {
+
+        @Override
+        public void onServiceConnected(ComponentName comp, IBinder service) {
+            forwardUserFirewall = true;
+            Slog.i(TAG, "Connection to UFW established.");
+            // Store messenger
+            mUFWService = new Messenger(service);
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName comp) {
+            forwardUserFirewall = false;
+            mUFWService = null;
+            Slog.w(TAG, "Connection with UFW lost!");
+            mHandler.sendEmptyMessageDelayed(1, 250);
+        }
+    }
+
+    /**
+     * Handler for messages received from the UFW.
+     */
+    private class UFWHandler extends Handler {
+
+        @Override
+        public void handleMessage(Message msg) {
+            switch (msg.what) {
+                case CHECK_INTENT:
+                    Bundle data = msg.getData();
+                    if (data == null) break;
+                    int intentType = data.getInt("intentType", -1);
+                    if (intentType == TYPE_ACTIVITY)
+                        sendActivityAsUser(data);
+                    if (intentType == TYPE_SERVICE)
+                        sendServiceAsUser(data);
+                    if (intentType == TYPE_BROADCAST)
+                        sendBroadcastAsUser(data);
+                break;
+            }
+        }
+    }
+
+    private void sendActivityAsUser(Bundle data) {
+        IApplicationThread caller = ApplicationThreadNative.asInterface(data.getBinder("caller"));
+        String callingPackage = data.getString("callingPackage");
+        Intent intent = data.getParcelable("intent");
+        String resolvedType = data.getString("resolvedType");
+        IBinder resultTo = data.getBinder("resultTo");
+        String resultWho = data.getString("resultWho");
+        int requestCode = data.getInt("requestCode");
+        int startFlags = data.getInt("startFlags");
+        Bundle options = data.getBundle("options");
+        int userId = data.getInt("userId");
+
+        int res =  mAms.startActivityAsUser(caller, callingPackage, intent, resolvedType, resultTo,
+            resultWho, requestCode, startFlags, null, options, userId);
+
+        if (res < 0) Slog.w(TAG, "AMS startActivityAsUser returned error: " + res);
+    }
+
+    private void sendServiceAsUser(Bundle data) {
+        // Determine how this service needs to be sent
+        Intent intent = data.getParcelable("intent");
+        String serviceAction = data.getString(IFW_SERVICE_ACTION);
+        if (serviceAction == null) {
+            Slog.w(TAG, "Received service intent from user firewall with no API mark!");
+            return;
+        }
+
+        if (serviceAction.equals("start")) {
+            IApplicationThread caller = ApplicationThreadNative.asInterface(data.getBinder("caller"));
+            String resolvedType = data.getString("resolvedType");
+            int userId = data.getInt("userId");
+            mAms.startService(caller, intent, resolvedType, userId);
+        }
+        if (serviceAction.equals("bind")) {
+            IApplicationThread caller = ApplicationThreadNative.asInterface(data.getBinder("caller"));
+            IBinder token = data.getBinder("token");
+            String resolvedType = data.getString("resolvedType");
+            IServiceConnection connection = IServiceConnection.Stub.asInterface(data.getBinder("connection"));
+            int flags = data.getInt("flags");
+            int userId = data.getInt("userId");
+            mAms.bindService(caller, token, intent, resolvedType, connection, flags, userId);
+        }
+        if (serviceAction.equals("stop")) {
+            IApplicationThread caller = ApplicationThreadNative.asInterface(data.getBinder("caller"));
+            String resolvedType = data.getString("resolvedType");
+            int userId = data.getInt("userId");
+            mAms.stopService(caller, intent, resolvedType, userId);
+        }
+        if (serviceAction.equals("peek")) {
+            String resolvedType = data.getString("resolvedType");
+            mAms.peekService(intent, resolvedType);
+        }
+    }
+
+    private void sendBroadcastAsUser(Bundle data) {
+        IApplicationThread caller = ApplicationThreadNative.asInterface(data.getBinder("caller"));
+        Intent intent = data.getParcelable("intent");
+        String resolvedType = data.getString("resolvedType");
+        IIntentReceiver resultTo = IIntentReceiver.Stub.asInterface(data.getBinder("resultTo"));
+        int resultCode = data.getInt("resultCode");
+        String resultData = data.getString("resultData");
+        Bundle map = data.getBundle("map");
+        String requiredPermission = data.getString("requiredPermission");
+        int appOp = data.getInt("appOp");
+        boolean serialized = data.getBoolean("serialized");
+        boolean sticky = data.getBoolean("sticky");
+        int userId = data.getInt("userId");
+
+        int res = mAms.broadcastIntent(caller, intent, resolvedType, resultTo, resultCode, resultData, map,
+            requiredPermission, appOp, serialized, sticky, userId);
+
+        if (res < 0) Slog.w(TAG, "AMS broadcastIntent returned error: " + res);
     }
 
     /**

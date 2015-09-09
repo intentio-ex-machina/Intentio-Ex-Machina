@@ -301,10 +301,12 @@ public final class ActiveServices {
 
 
         ServiceLookupResult res =
-            retrieveServiceLocked(service, resolvedType,
-                    callingPid, callingUid, userId, true, callerFg);
+            retrieveServiceLocked(caller, null, null, service, resolvedType, callingPid, callingUid, 0, userId, true, callerFg, "start");
         if (res == null) {
             return null;
+        }
+        if (res.forwarded) {
+            return service.getComponent();
         }
         if (res.record == null) {
             return new ComponentName("!", res.permission != null
@@ -463,11 +465,13 @@ public final class ActiveServices {
                     + " (pid=" + Binder.getCallingPid()
                     + ") when stopping service " + service);
         }
-
         // If this service is active, make sure it is stopped.
-        ServiceLookupResult r = retrieveServiceLocked(service, resolvedType,
-                Binder.getCallingPid(), Binder.getCallingUid(), userId, false, false);
+        ServiceLookupResult r = retrieveServiceLocked(caller, null, null, service, resolvedType,
+                Binder.getCallingPid(), Binder.getCallingUid(), 0, userId, false, false, "stop");
         if (r != null) {
+            if (r.forwarded == true) {
+                return 1;
+            }
             if (r.record != null) {
                 final long origId = Binder.clearCallingIdentity();
                 try {
@@ -484,9 +488,9 @@ public final class ActiveServices {
     }
 
     IBinder peekServiceLocked(Intent service, String resolvedType) {
-        ServiceLookupResult r = retrieveServiceLocked(service, resolvedType,
-                Binder.getCallingPid(), Binder.getCallingUid(),
-                UserHandle.getCallingUserId(), false, false);
+        ServiceLookupResult r = retrieveServiceLocked(null, null, null, service, resolvedType,
+                Binder.getCallingPid(), Binder.getCallingUid(), 0,
+                UserHandle.getCallingUserId(), false, false, "peek");
 
         IBinder ret = null;
         if (r != null) {
@@ -721,13 +725,16 @@ public final class ActiveServices {
         final boolean callerFg = callerApp.setSchedGroup != Process.THREAD_GROUP_BG_NONINTERACTIVE;
 
         ServiceLookupResult res =
-            retrieveServiceLocked(service, resolvedType,
-                    Binder.getCallingPid(), Binder.getCallingUid(), userId, true, callerFg);
+            retrieveServiceLocked(caller, token, connection, service, resolvedType,
+                    Binder.getCallingPid(), Binder.getCallingUid(), flags, userId, true, callerFg, "bind");
         if (res == null) {
             return 0;
         }
         if (res.record == null) {
             return -1;
+        }
+        if (res.forwarded == true) {
+            return 1;
         }
         ServiceRecord s = res.record;
 
@@ -968,10 +975,18 @@ public final class ActiveServices {
     private final class ServiceLookupResult {
         final ServiceRecord record;
         final String permission;
+        final boolean forwarded;
 
         ServiceLookupResult(ServiceRecord _record, String _permission) {
             record = _record;
             permission = _permission;
+            forwarded = false;
+        }
+
+        ServiceLookupResult(ServiceRecord _record, String _permission, boolean _forwarded) {
+            record = _record;
+            permission = _permission;
+            forwarded = _forwarded;
         }
     }
 
@@ -989,9 +1004,10 @@ public final class ActiveServices {
         }
     }
 
-    private ServiceLookupResult retrieveServiceLocked(Intent service,
-            String resolvedType, int callingPid, int callingUid, int userId,
-            boolean createIfNeeded, boolean callingFromFg) {
+    private ServiceLookupResult retrieveServiceLocked(IApplicationThread caller, IBinder token,
+            IServiceConnection connection, Intent service, String resolvedType, int callingPid,
+            int callingUid, int flags, int userId, boolean createIfNeeded, boolean callingFromFg,
+            String action) {
         ServiceRecord r = null;
         if (DEBUG_SERVICE) Slog.v(TAG, "retrieveServiceLocked: " + service
                 + " type=" + resolvedType + " callingUid=" + callingUid);
@@ -1088,9 +1104,13 @@ public final class ActiveServices {
             } catch (Exception e) {
                 Slog.w(TAG, "Could not fetch callingPackage for intent firewall");
             }
-            if (!mAm.mIntentFirewall.checkService(r.name, service, callingUid, callingPid,
-                    resolvedType, r.appInfo, callingPackage, userId)) {
+            int ifw = mAm.mIntentFirewall.checkService(caller, token, connection, r.name, service, callingUid,
+                    callingPid, resolvedType, r.appInfo, callingPackage, flags, userId, action);
+            if (ifw == 1) { //block
                 return null;
+            }
+            if (ifw == 2) { //forwarded
+                return new ServiceLookupResult(r, null, true);
             }
             return new ServiceLookupResult(r, null);
         }
