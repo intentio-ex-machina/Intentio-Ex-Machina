@@ -344,7 +344,6 @@ public class IntentFirewall {
         if (!mac) return BLOCK_INTENT;
 
         // If there isn't a userfirewall, then MAC is all we check
-        //if (mUserFirewall == null) return ALLOW_INTENT;
         if (mUFWService == null) return ALLOW_INTENT;
 
         // At this point, the intent has passed MAC and there is a user firewall. If it is a system
