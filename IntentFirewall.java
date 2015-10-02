@@ -344,11 +344,20 @@ public class IntentFirewall {
         if (!mac) return BLOCK_INTENT;
 
         // If there isn't a userfirewall, then MAC is all we check
-        if (mUserFirewall == null) return ALLOW_INTENT;
+        //if (mUserFirewall == null) return ALLOW_INTENT;
+        if (mUFWService == null) return ALLOW_INTENT;
 
-        // At this point, the intent has passed MAC and there is a user firewall. If it is an intent sent
-        // by system, we'll allow.
+        // At this point, the intent has passed MAC and there is a user firewall. If it is a system
+        // intent, we'll allow it because we don't want the user firewall to be able to block intents which
+        // are critical to the system's stability.
         if (!UserHandle.isApp(callerUid)) return ALLOW_INTENT;
+
+        // We also allow the intent to bypass the user firewall if it is an intra-app intent. This is because
+        // the user firewall's purpose is to inspect intents which travel between apps, not intents being
+        // sent and received from within the same app.
+        if (callerPackage != null && resolvedComponent != null)
+            if (callerPackage.equals(resolvedComponent.getPackageName()))
+                return ALLOW_INTENT;
 
         // If it isn't sent by system, then it was sent by a normal app. If it has a valid token, then it
         // has already been through the user firewall and we can allow it. If it has no token, we'll advise
@@ -1238,6 +1247,7 @@ public class IntentFirewall {
                 case CHECK_INTENT:
                     Bundle data = msg.getData();
                     if (data == null) break;
+                    if (!validateData(data)) break;
                     int intentType = data.getInt("intentType", -1);
                     if (intentType == TYPE_ACTIVITY)
                         sendActivityAsUser(data);
@@ -1248,6 +1258,21 @@ public class IntentFirewall {
                 break;
             }
         }
+    }
+
+    /**
+     * Validates bundles received from the user firewall.
+     *
+     * Returns true if the bundle is valid, otherwise returns false.
+     */
+    private boolean validateData(Bundle data) {
+        // Every bundle should have an intent
+        Intent intent = data.getParcelable("intent");
+        if (intent == null) return false;
+        // Every intent should have a valid token
+        if (validateToken(intent) != TOKEN_VALID) return false;
+        // All checks passed
+        return true;
     }
 
     private void sendActivityAsUser(Bundle data) {
