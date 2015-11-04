@@ -207,7 +207,8 @@ public class IntentFirewall {
     }
 
     private void sendServiceToUserFirewall(IApplicationThread caller, IBinder token, Intent service,
-            String resolvedType, IServiceConnection connection, int flags, int userId, String action) {
+            String resolvedType, IServiceConnection connection, int flags, int userId, String action,
+            int callerUid, int callerPid, String callerPackage) {
         // Make sure user firewall is bound
         if (mUFWService == null) {
             Slog.w(TAG, "User firewall is enabled, but not bound yet. Dropping service intent.");
@@ -226,6 +227,9 @@ public class IntentFirewall {
         if (connection != null) data.putBinder("connection", connection.asBinder());
         data.putInt("flags", flags);
         data.putInt("userId", userId);
+        data.putString("callingPackage", callerPackage);
+        data.putInt("callerUid", callerUid);
+        data.putInt("callerPid", callerPid);
         // Prepare message
         Message msg = Message.obtain(null, CHECK_INTENT);
         msg.setData(data);
@@ -305,7 +309,7 @@ public class IntentFirewall {
                 return 1;
             case FORWARD_INTENT:
                 sendServiceToUserFirewall(caller, token, intent, resolvedType, connection, flags, userId,
-                    action);
+                    action, callerUid, callerPid, callerPackage);
                 return 2;
         }
         return 1;
