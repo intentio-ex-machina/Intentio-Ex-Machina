@@ -4,7 +4,7 @@ SEIntentFirewall
 Wiki
 ----
 
-If you're looking for guides on how to use IEM, please visit the [wiki](https://bitbucket.org/carter-yagemann/seintent-firewall/wiki/).
+If you're looking for guides on how to use IEM, please visit the [wiki](https://bitbucket.org/carter-yagemann/intentio-ex-machina/wiki/).
 
 Branch
 ------
