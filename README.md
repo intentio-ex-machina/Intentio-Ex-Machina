@@ -9,4 +9,4 @@ If you're looking for guides on how to use IEM, please visit the [wiki](https://
 Branch
 ------
 
-This is the 5.1.1r1 branch.
+This is the 5.1.1-r1 branch.
